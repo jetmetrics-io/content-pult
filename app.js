@@ -26,7 +26,7 @@ const PILLARS = [
 const PMAP = Object.fromEntries(PILLARS.map(p => [p.code, p]));
 const pName = p => (p.code === 'Personal' || p.code === 'Promo' ? p.name : `${p.code} ${p.name}`);
 const pShort = code => (code === 'Personal' || code === 'Promo' ? PMAP[code].name : code);
-const IDEA_STATUSES = ['новая', 'в работе', 'отложена', 'отклонена'];
+const IDEA_STATUSES = ['новая', 'в работе', 'отложена', 'отклонена', 'стала постом'];
 const POST_STATUSES = ['идея', 'в работе', 'черновик', 'готов', 'опубликован', 'парковка'];
 const STAT_KEYS = ['li_impressions', 'li_reach', 'li_reactions', 'li_comments', 'li_saves', 'li_reposts', 'li_sends',
   'li_profile_views', 'li_followers', 'tg_views', 'tg_reactions', 'tg_forwards', 'tg_comments', 'tg_clicks', 'tg_followers'];
@@ -48,7 +48,7 @@ const TOKEN_KEY = 'pult:gh-token';
 
 const S = {
   files: [], units: [], by: {}, theses: [], thesesBy: {}, became: {}, root: MAC_ROOT, today: null,
-  view: 'ideas', f: { pillar: 'all', src: 'all', hidden: false }, q: '',
+  view: 'ideas', f: { pillar: 'all', src: 'all', hidden: false, cmt: false, noPosted: true }, q: '', drafts: {},
   ideasKind: 'idea', sort: 'rank', planOffset: 0, rateMode: 'duel', rateKind: 'idea',
   tbl: { k: 'rank', dir: -1 }, expand: {}, drawer: null, dragKey: null, pair: null, lastPair: null,
   lastLoad: 0, loaded: false, loading: false,
@@ -177,7 +177,59 @@ function firstText(body, limit = 420) {
   const t = out.join(' ').replace(/\[\[([^\]|]+)\|([^\]]+)\]\]/g, '$2').replace(/\[\[([^\]]+)\]\]/g, '$1').replace(/\*\*|__|`/g, '');
   return t.length > limit ? t.slice(0, limit) + '…' : t;
 }
-const ideaStage = st => ({ 'новая': 'идея', 'в работе': 'в работе', 'отложена': 'парковка', 'отклонена': 'отклонено' })[st] || 'идея';
+const ideaStage = st => ({ 'новая': 'идея', 'в работе': 'в работе', 'отложена': 'парковка', 'отклонена': 'отклонено', 'стала постом': 'опубликован' })[st] || 'идея';
+
+/* ---------- комментарии Дмитрия для Claude: раздел в конце заметки, галочка = Claude учёл ----------
+   ## 💬 Комментарии Дмитрия
+   - [ ] 💬 2026-10-19 18:40 — текст (продолжение — строки с отступом)
+       - ↳ Claude 2026-10-20: что сделал                 ← ответ Claude, галочка становится [x]
+   Открытые Claude собирает скриптом _pult/comments.py. */
+const CMT_HEAD = '## 💬 Комментарии Дмитрия';
+const CMT_RE = /^- \[( |x|X)\] 💬 (\d{4}-\d{2}-\d{2})(?: (\d{2}:\d{2}))? — (.*)$/;
+const isHeading = l => /^#{1,2} /.test(l);
+function cmtSection(lines) {
+  const start = lines.findIndex(l => l.trim() === CMT_HEAD);
+  if (start < 0) return null;
+  let end = lines.length;
+  for (let i = start + 1; i < lines.length; i++) if (isHeading(lines[i])) { end = i; break; }
+  return { start, end };
+}
+function parseComments(body) {
+  const lines = body.split('\n');
+  const sec = cmtSection(lines);
+  if (!sec) return [];
+  const out = [];
+  for (const l of lines.slice(sec.start + 1, sec.end)) {
+    const m = l.match(CMT_RE);
+    if (m) { out.push({ done: m[1] !== ' ', date: m[2], time: m[3] || '', text: m[4], more: [], replies: [] }); continue; }
+    const c = out[out.length - 1];
+    if (!c || !/^\s+\S/.test(l)) continue;
+    const s = l.trim();
+    if (/^- ↳/.test(s)) c.replies.push(s.replace(/^- ↳\s*/, ''));
+    else c.more.push(s);
+  }
+  return out;
+}
+function stripComments(body) {
+  const lines = body.split('\n');
+  const sec = cmtSection(lines);
+  if (!sec) return body;
+  lines.splice(sec.start, sec.end - sec.start);
+  return lines.join('\n');
+}
+function addComment(text, comment, stamp) {
+  const rows = comment.trim().split('\n').map(s => s.trim()).filter(Boolean);
+  const entry = [`- [ ] 💬 ${stamp} — ${rows[0]}`, ...rows.slice(1).map(s => '    ' + s)].join('\n');
+  const lines = text.split('\n');
+  const sec = cmtSection(lines);
+  if (!sec) return { text: text.replace(/\s*$/, '') + `\n\n${CMT_HEAD}\n\n${entry}\n`, entry };
+  let last = sec.end - 1;
+  while (last > sec.start && lines[last].trim() === '') last--;
+  const add = last === sec.start ? ['', entry] : [entry];
+  if (sec.end < lines.length) add.push('');
+  lines.splice(last + 1, 0, ...add);
+  return { text: lines.join('\n'), entry };
+}
 
 function buildUnit(file) {
   const { fields, body } = FM.read(file.text);
@@ -206,8 +258,11 @@ function buildUnit(file) {
     rubric: fields.rubric || null,
     status_note: fields.status_note || null,
     archived: ('/' + file.path).includes('/_archive/'),
-    preview: firstText(body),
+    preview: firstText(stripComments(body)),
+    comments: parseComments(body),
   };
+  u.cmtOpen = u.comments.filter(c => !c.done).length;
+  if (kind === 'idea') u.post_ref = fields.post ? String(fields.post) : null;
   if (kind === 'post') {
     u.published = Object.fromEntries(['li', 'tg', 'fb', 'substack'].map(k => [k, fields['published_' + k] === true]));
     u.published_date = asDate(fields.published_date) || asDate(fields.published_en_date) || asDate(fields.published_ru_date) || (status === 'опубликован' ? u.date : null);
@@ -228,7 +283,7 @@ function derive(u) {
   const t = S.thesesBy[u.thesis];
   u.thesis_title = t ? t.title : null;
   if (!u.pillar && t && t.pillar) { u.pillar = t.pillar; u.pillar_inherited = true; }
-  if (u.kind === 'idea') u.became_post = S.became[u.id] || [];
+  if (u.kind === 'idea') u.became_post = [...(S.became[u.id] || []), ...(u.post_ref ? [u.post_ref.split(' ')[0]] : [])];
   return u;
 }
 function ingest(files) {
@@ -488,13 +543,16 @@ function pass(u) {
   if (!S.f.hidden && (u.stage === 'отклонено' || u.archived)) return false;
   if (S.f.pillar !== 'all' && (S.f.pillar === 'none' ? !!u.pillar : u.pillar !== S.f.pillar)) return false;
   if (S.f.src !== 'all' && srcGroup(u) !== S.f.src) return false;
+  if (S.f.cmt && !u.cmtOpen) return false;
+  if (S.f.noPosted && becamePost(u)) return false;
   if (S.q) {
-    const hay = [u.id, u.title, u.thesis, u.thesis_title, u.source, u.format, u.preview].join(' ').toLowerCase();
+    const hay = [u.id, u.title, u.thesis, u.thesis_title, u.source, u.format, u.preview, ...u.comments.map(c => c.text)].join(' ').toLowerCase();
     if (!S.q.toLowerCase().split(/\s+/).filter(Boolean).every(w => hay.includes(w))) return false;
   }
   return true;
 }
-const becamePost = u => u.kind === 'idea' && u.became_post && u.became_post.length > 0;
+/* идея стала постом: на неё ссылается пост (idea: в шапке поста), у неё есть поле post: или статус «стала постом» */
+const becamePost = u => u.kind === 'idea' && ((u.became_post && u.became_post.length > 0) || u.status === 'стала постом');
 const cmpNum = (a, b) => (b ?? -1e9) - (a ?? -1e9);
 const eloOf = u => (u.my_duels ? u.my_elo : null);
 const newest = (a, b) => String(b.created || b.date || '').localeCompare(String(a.created || a.date || '')) || (a.id < b.id ? 1 : -1);
@@ -523,12 +581,13 @@ const eloHtml = u => (u.my_duels ? `<span class="elo" title="Рейтинг по
 function dShort(iso) { if (!iso) return ''; const [, m, d] = iso.split('-').map(Number); return `${d} ${MON[m - 1]}`; }
 function tagsHtml(u) {
   const t = [];
-  if (u.kind === 'post' || u.status !== 'новая') t.push(`<span class="tag">${esc(u.status)}</span>`);
+  if (becamePost(u)) t.push(`<span class="tag blue">${icon('megaphone')}стала постом${u.became_post.length ? ' ' + esc(u.became_post.join(', ')) : ''}</span>`);
+  else if (u.kind === 'post' || u.status !== 'новая') t.push(`<span class="tag">${esc(u.status)}</span>`);
   if (u.thesis) t.push(`<span class="tag" title="${esc(u.thesis_title || '')}">${esc(u.thesis)}</span>`);
   if (u.kind === 'idea') t.push(`<span class="tag">${esc(srcName(u))}</span>`);
   if (u.plan_date) t.push(`<span class="tag green">${icon('calendar-days')}${dShort(u.plan_date)}</span>`);
   if (u.kind === 'post' && u.published_date && u.stage === 'опубликован') t.push(`<span class="tag">${icon('megaphone')}${dShort(u.published_date)}</span>`);
-  if (becamePost(u)) t.push(`<span class="tag blue">→ ${esc(u.became_post.join(', '))}</span>`);
+  if (u.cmtOpen) t.push(`<span class="tag cmt" title="Комментарии, которые Claude ещё не учёл">${icon('message-circle')}${u.cmtOpen}</span>`);
   return `<div class="tags">${t.join('')}</div>`;
 }
 function cardHtml(u) {
@@ -543,7 +602,7 @@ function cardHtml(u) {
 function miniHtml(u) {
   return `<div class="mini" draggable="true" data-drag="${esc(u.path)}" data-open="${esc(u.path)}">
     <div class="row"><span class="uid">${esc(u.id)}</span><span class="pdot" style="background:var(--p-${u.pillar || 'none'})" title="${esc(PMAP[u.pillar] ? pName(PMAP[u.pillar]) : 'без пиллара')}"></span>
-      <span class="r">${u.plan_date ? `<span class="tag green">${icon('calendar-days')}${dShort(u.plan_date)}</span>` : ''}${u.my_score ? `<span title="Твоя оценка">★${u.my_score}</span>` : ''}</span></div>
+      <span class="r">${u.cmtOpen ? `<span class="tag cmt" title="Комментарии, которые Claude ещё не учёл">${icon('message-circle')}${u.cmtOpen}</span>` : ''}${u.plan_date ? `<span class="tag green">${icon('calendar-days')}${dShort(u.plan_date)}</span>` : ''}${u.my_score ? `<span title="Твоя оценка">★${u.my_score}</span>` : ''}</span></div>
     <div class="t">${esc(u.title)}</div>
   </div>`;
 }
@@ -564,7 +623,9 @@ function renderFilters() {
   $('#filters').innerHTML = `
     <div class="fgroup"><span class="flabel">Пиллар</span>${pchips.map(([k, n, c, x]) => `<button class="chip" data-f="pillar" data-v="${k}" aria-pressed="${S.f.pillar === k}">${c ? `<span class="pdot" style="background:var(--p-${c})"></span>` : ''}${esc(n)}<span class="c">${x}</span></button>`).join('')}</div>
     <div class="fgroup"><span class="flabel">Откуда</span>${SRC.map(([k, n]) => `<button class="chip" data-f="src" data-v="${k}" aria-pressed="${S.f.src === k}">${esc(n)}<span class="c">${scnt(k)}</span></button>`).join('')}</div>
-    <label class="toggle"><input type="checkbox" id="hidden" ${S.f.hidden ? 'checked' : ''}>Показать отклонённые и архив</label>`;
+    <label class="toggle"><input type="checkbox" id="noposted" ${S.f.noPosted ? 'checked' : ''}>Скрыть идеи, ставшие постами<span class="c">${S.units.filter(becamePost).length}</span></label>
+    <label class="toggle"><input type="checkbox" id="hidden" ${S.f.hidden ? 'checked' : ''}>Показать отклонённые и архив</label>
+    <label class="toggle"><input type="checkbox" id="cmtonly" ${S.f.cmt ? 'checked' : ''}>${icon('message-circle')}Только с комментариями, которые Claude ещё не учёл<span class="c">${S.units.filter(u => u.cmtOpen).length}</span></label>`;
   const ideas = S.units.filter(u => u.kind === 'idea' && ['идея', 'в работе'].includes(u.stage) && !becamePost(u)).length;
   const live = S.units.filter(u => u.kind === 'post' && !u.archived && ['идея', 'в работе', 'черновик', 'готов'].includes(u.stage)).length;
   $('#counts').textContent = `${ideas} идей в банке · ${live} постов в работе`;
@@ -897,6 +958,47 @@ function fillImages(root) {
     } catch (e) { /* картинка не загрузилась — остаётся подпись */ }
   });
 }
+function commentsHtml(u) {
+  const list = u.comments.map(c => `<div class="cmt ${c.done ? 'done' : ''}">
+      <div class="cmeta">${c.done ? `${icon('check-check')}учтено` : `${icon('clock')}ждёт Claude`}<span>${dShort(c.date)}${c.time ? ' ' + c.time : ''}</span></div>
+      <div class="ctext">${esc([c.text, ...c.more].join('\n'))}</div>
+      ${c.replies.map(r => `<div class="creply">${icon('corner-down-right')}${esc(r)}</div>`).join('')}
+    </div>`).join('');
+  return `<div class="cmts"><p class="section-l">Комментарии для Claude</p>
+    ${list}
+    <textarea id="d-cmt" rows="3" placeholder="Что Claude учесть по этой ${u.kind === 'idea' ? 'идее' : 'заметке'}: поправить угол, связать с другой идеей, не брать…"></textarea>
+    <div class="inline"><button class="btn primary" id="d-cmt-send">${icon('send')}Отправить</button>
+      <span class="hint faint">Cmd+Enter. Запишется в файл, Claude заберёт при следующей работе с контентом.</span></div>
+  </div>`;
+}
+function stampNow() { const d = new Date(); return `${isoOf(d)} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; }
+function sendComment(u0) {
+  const val = ($('#d-cmt')?.value || '').trim();
+  if (!val) return;
+  const path = u0.path;
+  enqueue(path, async () => {
+    const u = S.by[path];
+    const prev = u.text;
+    const { text, entry } = addComment(u.text, val, stampNow());
+    let ver;
+    try { ver = await Store.write(u, text, `пульт: ${u.id} комментарий для Claude`); }
+    catch (e) {
+      if (e instanceof Conflict) { replaceFile(e.file); render(); toast('Файл поменяли в другом месте. Показываю свежую версию — отправь ещё раз, текст сохранён.', { kind: 'warn' }); return; }
+      toast(MODE === 'gh' ? `GitHub не принял комментарий: ${e.message}` : 'Пульт не отвечает. Окно терминала с пультом открыто?', { kind: 'err' });
+      return;
+    }
+    delete S.drafts[path];
+    replaceFile({ path, text, ver });
+    render();
+    toast(`${u.id}: комментарий записан ${Store.label}`, { undo: () => enqueue(path, async () => {
+      const cur = S.by[path];
+      // файл с тех пор не меняли — вернуть как было; меняли — убрать только эту запись
+      const back = cur.text === text ? prev : cur.text.replace('\n' + entry, '');
+      try { const v = await Store.write(cur, back, `пульт: ${cur.id} комментарий отменён`); replaceFile({ path, text: back, ver: v }); S.drafts[path] = val; render(); toast('Комментарий отменён'); }
+      catch (e) { toast('Не вышло отменить — удали комментарий в Обсидиане', { kind: 'err' }); }
+    }) });
+  });
+}
 function closeDrawer() { S.drawer = null; $('#drawer-root').innerHTML = ''; }
 function openDrawer(key) { S.drawer = key; renderDrawer(); }
 function renderDrawer() {
@@ -912,7 +1014,7 @@ function renderDrawer() {
   if (u.platforms) meta.push(['Площадки', u.platforms]);
   if (u.created) meta.push(['Заведена', dShort(u.created) + ' ' + u.created.slice(0, 4)]);
   if (u.status_note) meta.push(['Пометка к статусу', u.status_note]);
-  if (becamePost(u)) meta.push(['Стала постом', u.became_post.join(', ')]);
+  if (becamePost(u)) meta.push(['Стала постом', u.post_ref || u.became_post.join(', ') || 'да (статус в файле)']);
   if (u.kind === 'post') {
     const where = Object.entries(u.published || {}).filter(([, v]) => v).map(([k]) => ({ li: 'LinkedIn', tg: 'Telegram', fb: 'Facebook', substack: 'Substack' }[k]));
     if (where.length) meta.push(['Вышел', `${where.join(', ')}${u.published_date ? ' · ' + dShort(u.published_date) : ''}`]);
@@ -936,7 +1038,8 @@ function renderDrawer() {
         ${u.my_duels ? `<span class="k">Дуэли</span><span>${u.my_duels} сравн. · рейтинг ${u.my_elo}</span>` : ''}
       </div>
       <div class="fields">${meta.map(([k, v]) => `<span class="k">${esc(k)}</span><span>${esc(v)}</span>`).join('')}</div>
-      <div><p class="section-l">Текст файла</p><div class="md">${mdToHtml(u.body)}</div></div>
+      ${commentsHtml(u)}
+      <div><p class="section-l">Текст файла</p><div class="md">${mdToHtml(stripComments(u.body))}</div></div>
     </div>
   </aside>`;
   icons();
@@ -948,6 +1051,13 @@ function renderDrawer() {
   $('#d-plan').onchange = e => save(u, { plan_date: e.target.value || null }, { label: e.target.value ? `${u.id} в плане на ${dShort(e.target.value)}` : `${u.id} убран из плана` });
   const clr = $('#d-plan-clear');
   if (clr) clr.onclick = () => save(u, { plan_date: null }, { label: `${u.id} убран из плана` });
+  const ta = $('#d-cmt');
+  if (ta) {
+    ta.value = S.drafts[u.path] || '';
+    ta.oninput = () => { S.drafts[u.path] = ta.value; };
+    ta.onkeydown = e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); sendComment(u); } };
+    $('#d-cmt-send').onclick = () => sendComment(u);
+  }
 }
 
 /* ---------- вход по паролю (режим GitHub) ---------- */
@@ -1059,6 +1169,8 @@ document.addEventListener('click', e => {
 });
 document.addEventListener('change', e => {
   if (e.target.id === 'hidden') { S.f.hidden = e.target.checked; savePrefs(); render(); }
+  if (e.target.id === 'cmtonly') { S.f.cmt = e.target.checked; savePrefs(); render(); }
+  if (e.target.id === 'noposted') { S.f.noPosted = e.target.checked; savePrefs(); render(); }
   if (e.target.id === 'sort') { S.sort = e.target.value; savePrefs(); render(); }
 });
 let qTimer;
