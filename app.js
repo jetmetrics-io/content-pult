@@ -281,29 +281,37 @@ const GH = {
     const b = await (await GH.api(`/repos/${GH_REPO.owner}/${GH_REPO.repo}/git/blobs/${sha}`)).json();
     return b64dec(b.content);
   },
-  /* один запрос GraphQL на все папки; если не вышло — через REST по файлу */
+  cache: {}, // текст по oid файла: при обновлении докачиваем только новые и изменённые
+  async gql(query) {
+    const r = await GH.api('/graphql', { method: 'POST', body: JSON.stringify({ query, variables: { o: GH_REPO.owner, r: GH_REPO.repo } }) });
+    const j = r.ok ? await r.json() : null;
+    if (!j || j.errors || !j.data || !j.data.repository) throw new Error('graphql');
+    return j.data.repository;
+  },
+  /* список файлов с oid — один лёгкий запрос; тексты — только тех, что ещё не видели, частями параллельно */
   async list() {
     const dirs = ['ideas', 'posts', 'posts/_archive', 'theses'];
-    const q = `query($o:String!,$r:String!){repository(owner:$o,name:$r){${dirs.map((d, i) => `d${i}:object(expression:"${GH_REPO.branch}:${d}"){...on Tree{entries{name type object{...on Blob{oid text isTruncated isBinary}}}}}`).join(' ')}}}`;
-    let j = null;
+    let want = [];
     try {
-      const r = await GH.api('/graphql', { method: 'POST', body: JSON.stringify({ query: q, variables: { o: GH_REPO.owner, r: GH_REPO.repo } }) });
-      j = r.ok ? await r.json() : null;
-    } catch (e) { if (!GH.token) throw e; j = null; }
-    if (!j || j.errors || !j.data || !j.data.repository) return GH.listRest();
-    const files = [], heavy = [];
-    dirs.forEach((d, i) => {
-      const t = j.data.repository['d' + i];
-      ((t && t.entries) || []).forEach(e => {
-        if (e.type !== 'blob' || !e.name.endsWith('.md') || !e.object || e.object.isBinary) return;
-        if (d === 'ideas' && !/^I-/.test(e.name)) return;
-        const f = { path: `${d}/${e.name}`, text: e.object.text, ver: e.object.oid };
-        if (e.object.isTruncated || f.text == null) heavy.push(f);
-        files.push(f);
-      });
-    });
-    await Promise.all(heavy.map(async f => { f.text = await GH.blobText(f.ver); }));
-    return files;
+      const repo = await GH.gql(`query($o:String!,$r:String!){repository(owner:$o,name:$r){${dirs.map((d, i) => `d${i}:object(expression:"${GH_REPO.branch}:${d}"){...on Tree{entries{name type oid}}}`).join(' ')}}}`);
+      dirs.forEach((d, i) => ((repo['d' + i] && repo['d' + i].entries) || []).forEach(e => {
+        if (e.type === 'blob' && e.name.endsWith('.md') && (d !== 'ideas' || /^I-/.test(e.name))) want.push({ path: `${d}/${e.name}`, oid: e.oid });
+      }));
+      const missing = [...new Set(want.map(e => e.oid).filter(o => GH.cache[o] == null))];
+      const parts = [];
+      for (let i = 0; i < missing.length; i += 40) parts.push(missing.slice(i, i + 40));
+      await Promise.all(parts.map(async part => {
+        const repo2 = await GH.gql(`query($o:String!,$r:String!){repository(owner:$o,name:$r){${part.map((o, i) => `b${i}:object(oid:"${o}"){...on Blob{text isTruncated}}`).join(' ')}}}`);
+        await Promise.all(part.map(async (o, i) => {
+          const b = repo2['b' + i];
+          GH.cache[o] = b && !b.isTruncated && b.text != null ? b.text : await GH.blobText(o);
+        }));
+      }));
+    } catch (e) {
+      if (!GH.token) throw e;
+      return GH.listRest();
+    }
+    return want.map(e => ({ path: e.path, text: GH.cache[e.oid], ver: e.oid }));
   },
   async listRest() {
     const r = await GH.api(`/repos/${GH_REPO.owner}/${GH_REPO.repo}/git/trees/${GH_REPO.branch}?recursive=1`);
@@ -313,7 +321,7 @@ const GH = {
     const want = tree.filter(e => e.type === 'blob' && (/^ideas\/I-[^/]+\.md$/.test(e.path) || /^posts\/(_archive\/)?[^/]+\.md$/.test(e.path) || /^theses\/[^/]+\.md$/.test(e.path)));
     const out = [];
     for (let i = 0; i < want.length; i += 16) {
-      out.push(...await Promise.all(want.slice(i, i + 16).map(async e => ({ path: e.path, text: await GH.blobText(e.sha), ver: e.sha }))));
+      out.push(...await Promise.all(want.slice(i, i + 16).map(async e => ({ path: e.path, text: GH.cache[e.sha] ?? (GH.cache[e.sha] = await GH.blobText(e.sha)), ver: e.sha }))));
     }
     return out;
   },
@@ -326,6 +334,7 @@ const GH = {
     }
     const j = await r.json();
     if (!r.ok) throw new Error(j.message || r.status);
+    GH.cache[j.content.sha] = text;
     return j.content.sha;
   },
   async imageSrc(name) {
