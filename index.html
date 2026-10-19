@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="ru" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Пульт контента</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 32 32%27%3E%3Crect width=%2732%27 height=%2732%27 rx=%278%27 fill=%27%23E7F6F1%27/%3E%3Ccircle cx=%2716%27 cy=%2716%27 r=%277%27 fill=%27%230E9C7D%27/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="app.css">
+</head>
+<body class="jm-base">
+<header class="top">
+  <div class="brand"><span class="dot"></span>Пульт контента</div>
+  <nav class="tabs" role="tablist" id="tabs">
+    <button class="tab" role="tab" data-view="ideas"><i data-lucide="lightbulb"></i>Идеи</button>
+    <button class="tab" role="tab" data-view="board"><i data-lucide="square-kanban"></i>Конвейер</button>
+    <button class="tab" role="tab" data-view="plan"><i data-lucide="calendar-days"></i>План</button>
+    <button class="tab" role="tab" data-view="rate"><i data-lucide="scale"></i>Оценка</button>
+    <button class="tab" role="tab" data-view="stats"><i data-lucide="chart-column"></i>Обзор</button>
+  </nav>
+  <div class="spacer"></div>
+  <span class="counts" id="counts"></span>
+  <label class="search"><i data-lucide="search"></i><input id="q" type="search" placeholder="Поиск: номер или слово" autocomplete="off"></label>
+  <span class="whereb" id="where"></span>
+  <button class="iconbtn" id="reload" title="Перечитать данные" aria-label="Перечитать данные"><i data-lucide="rotate-cw"></i></button>
+</header>
+<div class="filters" id="filters"></div>
+<main id="view"></main>
+<div id="drawer-root"></div>
+<div id="toasts" aria-live="polite"></div>
+<div id="tip" hidden></div>
+<script src="lucide.min.js"></script>
+<script src="marked.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
