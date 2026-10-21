@@ -40,8 +40,9 @@ const STAGES = [
 ];
 const REJECTED = { key: 'отклонено', name: 'Отклонено', icon: 'trash-2' };
 const IDEA_BY_STAGE = { 'идея': 'новая', 'в работе': 'в работе', 'парковка': 'отложена', 'отклонено': 'отклонена' };
-const SRC = [['all', 'Все'], ['cards', 'Карточки сент.–окт.'], ['old', 'Старый банк'], ['b0610', 'Банк 06.10'], ['posts', 'Посты']];
-const SORTS = [['rank', 'Твоя оценка и дуэли'], ['elo', 'Дуэли'], ['new', 'Сначала новые'], ['id', 'По номеру']];
+const SRC = [['all', 'Все'], ['batch', 'Партии с 21.10'], ['cards', 'Карточки сент.–окт.'], ['old', 'Старый банк'], ['b0610', 'Банк 06.10'], ['posts', 'Посты']];
+// звёзды и дуэли сняты 21.10.2026 (конвейер 2.0): порядок только по номеру или свежести
+const SORTS = [['id', 'По номеру'], ['new', 'Сначала новые']];
 const LIMIT = 60;
 const PREF_KEY = 'pult:prefs:v2';
 const TOKEN_KEY = 'pult:gh-token';
@@ -49,7 +50,7 @@ const TOKEN_KEY = 'pult:gh-token';
 const S = {
   files: [], units: [], by: {}, theses: [], thesesBy: {}, became: {}, root: MAC_ROOT, today: null,
   view: 'ideas', f: { pillar: 'all', src: 'all', hidden: false, cmt: false, noPosted: true }, q: '', drafts: {},
-  ideasKind: 'idea', sort: 'rank', planOffset: 0, rateMode: 'duel', rateKind: 'idea',
+  ideasKind: 'idea', sort: 'id', planOffset: 0, rateMode: 'duel', rateKind: 'idea',
   tbl: { k: 'rank', dir: -1 }, expand: {}, drawer: null, dragKey: null, pair: null, lastPair: null,
   lastLoad: 0, loaded: false, loading: false,
 };
@@ -60,7 +61,8 @@ function loadPrefs() {
     const p = JSON.parse(localStorage.getItem(PREF_KEY) || '{}');
     for (const k of ['view', 'ideasKind', 'sort', 'rateMode', 'rateKind']) if (p[k]) S[k] = p[k];
     if (p.f) Object.assign(S.f, p.f);
-    if (!SORTS.some(s => s[0] === S.sort)) S.sort = 'rank';
+    if (!SORTS.some(s => s[0] === S.sort)) S.sort = 'id';
+    if (S.view === 'rate') S.view = 'ideas'; // экран «Оценка» снят 21.10.2026
   } catch (e) { /* хранилище недоступно */ }
 }
 function savePrefs() {
@@ -260,6 +262,12 @@ function buildUnit(file) {
     // архив: папка _archive/ или status: архив (конвейер 2.0, 21.10.2026 — файлы остаются на месте)
     archived: ('/' + file.path).includes('/_archive/') || status === 'архив',
     preview: firstText(stripComments(body)),
+    // конвейер 2.0: польза для читателя, ♻️/🆕, исходник, оговорка, партия
+    benefit: ((stripComments(body).match(/\*\*Польза\.\*\*\s*(.+)/) || [])[1] || '').replace(/\*\*|__|`/g, '').trim() || null,
+    ikind: fields.kind ? String(fields.kind) : null,
+    source_post: fields.source_post ? String(fields.source_post) : null,
+    fit: fields.fit ? String(fields.fit) : null,
+    batch: asDate(fields.batch),
     comments: parseComments(body),
   };
   u.cmtOpen = u.comments.filter(c => !c.done).length;
@@ -537,6 +545,7 @@ function srcGroup(u) {
   const s = String(u.source || '');
   if (s.startsWith('старый банк')) return 'old';
   if (s.startsWith('банк 06.10')) return 'b0610';
+  if (u.batch) return 'batch';
   return 'cards';
 }
 const srcName = u => (SRC.find(x => x[0] === srcGroup(u)) || [])[1];
@@ -585,7 +594,10 @@ function tagsHtml(u) {
   if (becamePost(u)) t.push(`<span class="tag blue">${icon('megaphone')}стала постом${u.became_post.length ? ' ' + esc(u.became_post.join(', ')) : ''}</span>`);
   else if (u.kind === 'post' || u.status !== 'новая') t.push(`<span class="tag">${esc(u.status)}</span>`);
   if (u.thesis) t.push(`<span class="tag" title="${esc(u.thesis_title || '')}">${esc(u.thesis)}</span>`);
-  if (u.kind === 'idea') t.push(`<span class="tag">${esc(srcName(u))}</span>`);
+  if (u.ikind === 'перепозиционирование') t.push(`<span class="tag" title="Перепозиционирование вышедшего поста">♻️${u.source_post ? ' ' + esc(u.source_post) : ''}</span>`);
+  else if (u.ikind === 'новое') t.push(`<span class="tag">🆕 новое</span>`);
+  if (u.fit === 'с оговоркой') t.push(`<span class="tag" title="Оговорка по стратегии — в карточке">⚠️ с оговоркой</span>`);
+  if (u.kind === 'idea') t.push(`<span class="tag">${u.batch ? 'партия ' + dShort(u.batch) : esc(srcName(u))}</span>`);
   if (u.plan_date) t.push(`<span class="tag green">${icon('calendar-days')}${dShort(u.plan_date)}</span>`);
   if (u.kind === 'post' && u.published_date && u.stage === 'опубликован') t.push(`<span class="tag">${icon('megaphone')}${dShort(u.published_date)}</span>`);
   if (u.cmtOpen) t.push(`<span class="tag cmt" title="Комментарии, которые Claude ещё не учёл">${icon('message-circle')}${u.cmtOpen}</span>`);
@@ -595,9 +607,8 @@ function cardHtml(u) {
   return `<article class="card" data-open="${esc(u.path)}">
     <div class="row"><span class="uid">${esc(u.id)}</span>${pillarHtml(u)}</div>
     <h3>${esc(u.title)}</h3>
-    ${u.preview ? `<p class="pv">${esc(u.preview)}</p>` : ''}
+    ${u.benefit ? `<p class="pv benefit"><b>Польза.</b> ${esc(u.benefit)}</p>` : u.preview ? `<p class="pv">${esc(u.preview)}</p>` : ''}
     ${tagsHtml(u)}
-    <div class="foot">${eloHtml(u) || '<span></span>'}${starsHtml(u)}</div>
   </article>`;
 }
 function miniHtml(u) {
@@ -959,12 +970,13 @@ function fillImages(root) {
     } catch (e) { /* картинка не загрузилась — остаётся подпись */ }
   });
 }
-function commentsHtml(u) {
+function commentsHtml(u, withInput = true) {
   const list = u.comments.map(c => `<div class="cmt ${c.done ? 'done' : ''}">
       <div class="cmeta">${c.done ? `${icon('check-check')}учтено` : `${icon('clock')}ждёт Claude`}<span>${dShort(c.date)}${c.time ? ' ' + c.time : ''}</span></div>
       <div class="ctext">${esc([c.text, ...c.more].join('\n'))}</div>
       ${c.replies.map(r => `<div class="creply">${icon('corner-down-right')}${esc(r)}</div>`).join('')}
     </div>`).join('');
+  if (!withInput) return list ? `<div class="cmts"><p class="section-l">Комментарии для Claude</p>${list}</div>` : '';
   return `<div class="cmts"><p class="section-l">Комментарии для Claude</p>
     ${list}
     <textarea id="d-cmt" rows="3" placeholder="Что Claude учесть по этой ${u.kind === 'idea' ? 'идее' : 'заметке'}: поправить угол, связать с другой идеей, не брать…"></textarea>
@@ -973,8 +985,8 @@ function commentsHtml(u) {
   </div>`;
 }
 function stampNow() { const d = new Date(); return `${isoOf(d)} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; }
-function sendComment(u0) {
-  const val = ($('#d-cmt')?.value || '').trim();
+function sendComment(u0, val0) {
+  const val = (val0 ?? ($('#d-cmt')?.value || '')).trim();
   if (!val) return;
   const path = u0.path;
   enqueue(path, async () => {
@@ -1000,12 +1012,48 @@ function sendComment(u0) {
     }) });
   });
 }
-function closeDrawer() { S.drawer = null; $('#drawer-root').innerHTML = ''; }
-function openDrawer(key) { S.drawer = key; renderDrawer(); }
-function renderDrawer() {
+function closeDrawer() { S.drawer = null; S.fixOpen = null; $('#drawer-root').innerHTML = ''; }
+function openDrawer(key) { const fresh = S.drawer !== key; S.drawer = key; if (fresh) S.fixOpen = null; renderDrawer(fresh); }
+/* ---------- отбор идей: три кнопки и сразу следующая карточка (конвейер 2.0, 21.10.2026) ---------- */
+const DECIDE_OFF = ['стала постом', 'архив'];
+const undecided = u => u.kind === 'idea' && u.status === 'новая' && !u.cmtOpen;
+function openNext(path) {
+  // порядок — как на экране «Идеи»: те же фильтры и сортировка
+  const list = S.units.filter(x => x.kind === 'idea' && pass(x)).sort(sorter(S.sort));
+  const i = list.findIndex(x => x.path === path);
+  const next = list.slice(i + 1).find(undecided) || list.slice(0, Math.max(i, 0)).find(undecided);
+  if (next) openDrawer(next.path);
+  else { closeDrawer(); toast('На отборе больше ничего нет'); }
+}
+function decide(u, status) {
+  const label = status === 'в работе' ? 'берём' : 'не подходит';
+  openNext(u.path);
+  save(u, { status }, { label: `${u.id}: ${label}. Записано ${Store.label}` });
+}
+function decideHtml(u) {
+  if (u.kind !== 'idea' || DECIDE_OFF.includes(u.status)) return '';
+  const now = u.status === 'в работе' ? 'Решение: берём' : u.status === 'отклонена' ? 'Решение: не подходит'
+    : u.cmtOpen ? 'На доработке: комментарий ждёт Claude' : '';
+  return `<div class="decide" id="decide">
+    ${now ? `<div class="dnow">${esc(now)} · можно поменять</div>` : ''}
+    <div class="dbtns" id="d-btns">
+      <button class="dbtn no" data-decide="отклонена" aria-pressed="${u.status === 'отклонена'}">${icon('x')}Нафиг</button>
+      <button class="dbtn fix" data-decide="fix" aria-pressed="${u.status === 'новая' && u.cmtOpen > 0}">${icon('pencil')}Доработать</button>
+      <button class="dbtn yes" data-decide="в работе" aria-pressed="${u.status === 'в работе'}">${icon('check')}Берём</button>
+    </div>
+    <div class="dfix" id="d-fix-box" hidden>
+      <textarea id="d-fix" rows="3" placeholder="Как доработать: уже, другой исходник, соединить с другой идеей…"></textarea>
+      <div class="dbtns two"><button class="dbtn" id="d-fix-cancel">Отмена</button><button class="dbtn yes" id="d-fix-send">${icon('send')}Отправить</button></div>
+    </div>
+  </div>`;
+}
+function renderDrawer(fresh = false) {
   const u = S.by[S.drawer];
   if (!u) { closeDrawer(); return; }
-  const prevScroll = $('.dbody')?.scrollTop || 0;
+  // файл не менялся — не перерисовывать: запись соседней карточки не должна сбивать ввод в этой
+  if (!fresh && $('.drawer') && S.drawn === u.text) return;
+  S.drawn = u.text;
+  const prevScroll = fresh ? 0 : ($('.dbody')?.scrollTop || 0);
   const statuses = u.kind === 'idea' ? IDEA_STATUSES : POST_STATUSES;
   const meta = [];
   if (u.thesis) meta.push(['Тезис', `${u.thesis} ${u.thesis_title || ''}`]);
@@ -1026,22 +1074,22 @@ function renderDrawer() {
   $('#drawer-root').innerHTML = `<div class="scrim" data-close></div>
   <aside class="drawer" role="dialog" aria-label="${esc(u.id)}">
     <div class="dhead"><div class="row"><span class="uid">${esc(u.id)}</span><span class="kind">${u.kind === 'idea' ? 'идея' : 'пост'}</span>${pillarHtml(u)}<span class="spacer"></span>
-      <a class="linkbtn" href="obsidian://open?path=${encodeURIComponent(S.root + '/' + u.path)}" title="Откроется на маке, где стоит Обсидиан">${icon('external-link')}Обсидиан</a>
+      <a class="linkbtn obs" href="obsidian://open?path=${encodeURIComponent(S.root + '/' + u.path)}" title="Откроется на маке, где стоит Обсидиан">${icon('external-link')}Обсидиан</a>
       ${MODE === 'gh' ? `<a class="linkbtn" href="${ghUrl}" target="_blank" rel="noopener" title="Файл в репозитории — там же правка текста">${icon('file-code')}GitHub</a>` : ''}
       <button class="iconbtn" data-close aria-label="Закрыть">${icon('x')}</button></div>
       <h2>${esc(u.title)}</h2></div>
     <div class="dbody">
+      ${u.kind === 'idea' ? `<div class="md">${mdToHtml(stripComments(u.body).replace(/^\s*# .*\n/, ''))}</div>${commentsHtml(u, false)}<details class="more"><summary>Статус, пиллар, файл</summary>` : ''}
       <div class="fields">
         <span class="k">Статус</span><select class="sel" id="d-status">${statuses.map(s => `<option ${s === u.status ? 'selected' : ''}>${esc(s)}</option>`).join('')}${statuses.includes(u.status) ? '' : `<option selected disabled>${esc(u.status)}</option>`}</select>
         <span class="k">Пиллар</span><div class="inline"><select class="sel" id="d-pillar"><option value="">— не задан</option>${PILLARS.map(p => `<option value="${p.code}" ${u.pillar === p.code ? 'selected' : ''}>${esc(pName(p))}</option>`).join('')}</select>${u.pillar_inherited ? '<span class="faint">взят из тезиса, в файле пусто</span>' : ''}</div>
         <span class="k">Дата в плане</span><div class="inline"><input type="date" id="d-plan" value="${u.plan_date || ''}">${u.plan_date ? `<button class="btn ghost" id="d-plan-clear">${icon('x')}Убрать</button>` : ''}</div>
-        <span class="k">Твоя оценка</span><div class="inline">${starsHtml(u)}${u.my_score ? '<span class="faint">клик по той же звезде — снять</span>' : ''}</div>
-        ${u.my_duels ? `<span class="k">Дуэли</span><span>${u.my_duels} сравн. · рейтинг ${u.my_elo}</span>` : ''}
       </div>
       <div class="fields">${meta.map(([k, v]) => `<span class="k">${esc(k)}</span><span>${esc(v)}</span>`).join('')}</div>
-      ${commentsHtml(u)}
-      <div><p class="section-l">Текст файла</p><div class="md">${mdToHtml(stripComments(u.body))}</div></div>
+      ${u.kind === 'idea' ? '</details>' : `${commentsHtml(u)}
+      <div><p class="section-l">Текст файла</p><div class="md">${mdToHtml(stripComments(u.body))}</div></div>`}
     </div>
+    ${decideHtml(u)}
   </aside>`;
   icons();
   fillImages($('#drawer-root'));
@@ -1058,6 +1106,20 @@ function renderDrawer() {
     ta.oninput = () => { S.drafts[u.path] = ta.value; };
     ta.onkeydown = e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); sendComment(u); } };
     $('#d-cmt-send').onclick = () => sendComment(u);
+  }
+  const box = $('#d-fix-box');
+  if (box) {
+    const fix = $('#d-fix');
+    const send = () => { const v = fix.value.trim(); if (!v) { fix.focus(); return; } S.drafts[u.path] = v; S.fixOpen = null; sendComment(u, v); openNext(u.path); };
+    $$('#d-btns [data-decide]').forEach(b => { b.onclick = () => {
+      if (b.dataset.decide !== 'fix') { decide(u, b.dataset.decide); return; }
+      S.fixOpen = u.path; $('#d-btns').hidden = true; box.hidden = false; fix.value = S.drafts[u.path] || ''; fix.focus();
+    }; });
+    if (S.fixOpen === u.path) { $('#d-btns').hidden = true; box.hidden = false; fix.value = S.drafts[u.path] || ''; }
+    fix.oninput = () => { S.drafts[u.path] = fix.value; };
+    fix.onkeydown = e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send(); } };
+    $('#d-fix-send').onclick = send;
+    $('#d-fix-cancel').onclick = () => { S.fixOpen = null; box.hidden = true; $('#d-btns').hidden = false; };
   }
 }
 
@@ -1123,7 +1185,7 @@ function render() {
   const keep = {};
   $$('[data-scroll]').forEach(el => { keep[el.dataset.scroll] = el.scrollTop; });
   renderFilters();
-  const v = { ideas: renderIdeas, board: renderBoard, plan: renderPlan, rate: renderRate, stats: renderStats }[S.view] || renderIdeas;
+  const v = { ideas: renderIdeas, board: renderBoard, plan: renderPlan, stats: renderStats }[S.view] || renderIdeas;
   $('#view').innerHTML = v();
   $$('[data-scroll]').forEach(el => { if (keep[el.dataset.scroll]) el.scrollTop = keep[el.dataset.scroll]; });
   icons();
