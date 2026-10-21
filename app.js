@@ -26,8 +26,8 @@ const PILLARS = [
 const PMAP = Object.fromEntries(PILLARS.map(p => [p.code, p]));
 const pName = p => (p.code === 'Personal' || p.code === 'Promo' ? p.name : `${p.code} ${p.name}`);
 const pShort = code => (code === 'Personal' || code === 'Promo' ? PMAP[code].name : code);
-const IDEA_STATUSES = ['новая', 'в работе', 'отложена', 'отклонена', 'стала постом'];
-const POST_STATUSES = ['идея', 'в работе', 'черновик', 'готов', 'опубликован', 'парковка'];
+const IDEA_STATUSES = ['новая', 'в работе', 'отложена', 'отклонена', 'стала постом', 'архив'];
+const POST_STATUSES = ['идея', 'в работе', 'черновик', 'готов', 'опубликован', 'парковка', 'архив'];
 const STAT_KEYS = ['li_impressions', 'li_reach', 'li_reactions', 'li_comments', 'li_saves', 'li_reposts', 'li_sends',
   'li_profile_views', 'li_followers', 'tg_views', 'tg_reactions', 'tg_forwards', 'tg_comments', 'tg_clicks', 'tg_followers'];
 const STAGES = [
@@ -257,7 +257,8 @@ function buildUnit(file) {
     platforms: fields.platforms || fields.lang || null,
     rubric: fields.rubric || null,
     status_note: fields.status_note || null,
-    archived: ('/' + file.path).includes('/_archive/'),
+    // архив: папка _archive/ или status: архив (конвейер 2.0, 21.10.2026 — файлы остаются на месте)
+    archived: ('/' + file.path).includes('/_archive/') || status === 'архив',
     preview: firstText(stripComments(body)),
     comments: parseComments(body),
   };
