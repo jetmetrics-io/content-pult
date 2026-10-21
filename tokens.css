@@ -3,7 +3,7 @@
    Единственный источник правды. Подключай ЭТОТ файл первым в
    любом лендинге/продукте и обращайся к переменным, а не к хексам.
    Обновляешь цвет/шрифт здесь — меняется везде.
-   v1.0 · 2026-07-03
+   v1.3.0 · 2026-10-21 (раздел «Читшиты» — с 1.3.0)
    ============================================================ */
 
 /* ---- Шрифты грузятся отдельно (см. assets/fonts.md):
@@ -141,6 +141,50 @@
   --jm-z-modal:     1200;  /* модалка / диалог            */
   --jm-z-toast:     1300;  /* тост-уведомления            */
   --jm-z-tooltip:   1400;  /* тултипы (поверх всего)      */
+
+  /* ========== ЧИТШИТЫ (Figma, с 1.3.0) ==========
+     Библиотека «JetMetrics · Cheatsheets DS». В Figma попадает командой sync_tokens
+     из tokens.json → cheatsheet. Исключения из веб-правил — patterns/cheatsheet-grammar.md. */
+  --jm-cs-role-action-fill:      #DAE9FF;
+  --jm-cs-role-action-stroke:    var(--jm-blue);
+  --jm-cs-role-result-fill:      #D0F9F1;
+  --jm-cs-role-result-stroke:    var(--jm-green);
+  --jm-cs-role-diagnostic-fill:  #FFF7D9;
+  --jm-cs-role-diagnostic-stroke: var(--jm-yellow);
+  --jm-cs-role-cost-fill:        #FFE7E8;
+  --jm-cs-role-cost-stroke:      var(--jm-coral);
+  --jm-cs-eval-good:             var(--jm-green-tint);   /* оценка «хорошо», не роль */
+  --jm-cs-eval-bad:              var(--jm-coral-tint);
+  --jm-cs-eval-warn:             var(--jm-yellow-tint);
+  --jm-cs-eval-neutral:          var(--jm-blue-tint);
+  --jm-cs-link-direct:           var(--jm-green);        /* прямое влияние */
+  --jm-cs-link-inverse:          var(--jm-coral);        /* обратное влияние */
+  --jm-cs-link-order:            var(--jm-text);         /* порядок: блок-схемы, шаги */
+  --jm-cs-link-composition:      var(--jm-faint);        /* состав: скобки, раскол числа */
+  --jm-cs-text-primary:          var(--jm-text);
+  --jm-cs-text-muted:            var(--jm-muted);
+  --jm-cs-text-subtle:           var(--jm-faint);
+  --jm-cs-text-on-color:         var(--jm-surface);
+  --jm-cs-zone-fill:             var(--jm-surface);
+  --jm-cs-zone-stroke:           #9F9F9F;
+  --jm-cs-ink:                   var(--jm-ink);          /* тёмная метка, обводка плашки */
+  --jm-cs-divider:               var(--jm-line);
+  --jm-cs-accent-word:           #FFE58A;                /* жёлтое слово в шапке на цветном фоне */
+  --jm-cs-grid-on-color:         rgba(255,255,255,.07);
+  --jm-cs-grid-on-yellow:        rgba(173,173,173,.37);
+  /* Фоны листа: bg / сетка / заголовок / акцент / ореол ключевой */
+  --jm-cs-sheet-blue:            var(--jm-blue);
+  --jm-cs-sheet-purple:          var(--jm-purple);
+  --jm-cs-sheet-yellow:          var(--jm-yellow);
+  --jm-cs-sheet-green:           var(--jm-green);        /* резерв, не для карт */
+  --jm-cs-halo-opacity:          .3;
+  --jm-cs-r-s:     5px;   /* карточка метрики, чип, тёмная метка */
+  --jm-cs-r-m:     10px;  /* зона, текстовый блок, легенда, плашка автора */
+  --jm-cs-stroke-thin:  1px;
+  --jm-cs-stroke-base:  2px;
+  --jm-cs-stroke-trunk: 4px;  /* ствол карты, пара 4 / 2 в волне 1 */
+  --jm-cs-margin:  40px;  /* поле листа 1200 × 1500 */
+  --jm-cs-gutter:  20px;  /* между блоками; пара 20 / 16 в волне 1 */
 }
 
 /* ============================================================
