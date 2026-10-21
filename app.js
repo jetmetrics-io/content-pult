@@ -44,6 +44,10 @@ const SRC = [['all', 'Все'], ['batch', 'Партии с 21.10'], ['cards', '�
 // звёзды и дуэли сняты 21.10.2026 (конвейер 2.0): порядок только по номеру или свежести
 const SORTS = [['id', 'По номеру'], ['new', 'Сначала новые']];
 const LIMIT = 60;
+/* библиотека форм для картинок (этап 3 «Формат»): visuals/forms/library.json, собирает visuals/forms/build.py */
+const FORMS_PATH = 'visuals/forms/library.json';
+const formId = v => (String(v || '').match(/V-\d{2,3}/) || [null])[0];
+const TIER_TAG = { win: 'green', cond: 'yellow', weak: 'coral', none: '' };
 const PREF_KEY = 'pult:prefs:v2';
 const TOKEN_KEY = 'pult:gh-token';
 
@@ -53,6 +57,8 @@ const S = {
   ideasKind: 'idea', sort: 'id', planOffset: 0, rateMode: 'duel', rateKind: 'idea',
   tbl: { k: 'rank', dir: -1 }, expand: {}, drawer: null, dragKey: null, pair: null, lastPair: null,
   lastLoad: 0, loaded: false, loading: false,
+  forms: null, formBy: {}, formsErr: null, formsLoading: false, ff: { fam: 'all', tier: 'all' },
+  pick: null, pickVia: null, pickFrom: null, // выбор формы для поста: путь поста, откуда пришли, с какого экрана
 };
 
 /* ---------- настройки вида: только удобство, правда — в файлах ---------- */
@@ -61,12 +67,13 @@ function loadPrefs() {
     const p = JSON.parse(localStorage.getItem(PREF_KEY) || '{}');
     for (const k of ['view', 'ideasKind', 'sort', 'rateMode', 'rateKind']) if (p[k]) S[k] = p[k];
     if (p.f) Object.assign(S.f, p.f);
+    if (p.ff) Object.assign(S.ff, p.ff);
     if (!SORTS.some(s => s[0] === S.sort)) S.sort = 'id';
     if (S.view === 'rate') S.view = 'ideas'; // экран «Оценка» снят 21.10.2026
   } catch (e) { /* хранилище недоступно */ }
 }
 function savePrefs() {
-  try { localStorage.setItem(PREF_KEY, JSON.stringify({ view: S.view, ideasKind: S.ideasKind, sort: S.sort, rateMode: S.rateMode, rateKind: S.rateKind, f: S.f })); } catch (e) { /* нет хранилища */ }
+  try { localStorage.setItem(PREF_KEY, JSON.stringify({ view: S.view, ideasKind: S.ideasKind, sort: S.sort, rateMode: S.rateMode, rateKind: S.rateKind, f: S.f, ff: S.ff })); } catch (e) { /* нет хранилища */ }
 }
 
 /* ---------- шапка md: чтение и построчная правка (та же логика, что в _pult/fm.py) ---------- */
@@ -268,6 +275,9 @@ function buildUnit(file) {
     source_post: fields.source_post ? String(fields.source_post) : null,
     fit: fields.fit ? String(fields.fit) : null,
     batch: asDate(fields.batch),
+    // этап 3: варианты формы от Claude (первый — рекомендованный) и выбор Дмитрия
+    form_options: (Array.isArray(fields.form_options) ? fields.form_options : String(fields.form_options || '').split(/[,\s]+/)).map(formId).filter(Boolean),
+    format_pick: formId(fields.format_pick),
     comments: parseComments(body),
   };
   u.cmtOpen = u.comments.filter(c => !c.done).length;
@@ -330,6 +340,11 @@ const Local = {
     return j.mtime;
   },
   imageSrc: name => Promise.resolve('api/file?name=' + encodeURIComponent(name)),
+  async forms() {
+    const r = await fetch('api/forms', { cache: 'no-store' });
+    if (!r.ok) throw new Error(r.status === 404 ? 'пульт отдаёт библиотеку форм с версии 21.10 — перезапусти ярлык «Пульт контента»' : 'код ' + r.status);
+    return r.json();
+  },
 };
 
 const GH = {
@@ -407,6 +422,11 @@ const GH = {
     if (!hit) return null;
     const r = await GH.api(`/repos/${GH_REPO.owner}/${GH_REPO.repo}/contents/${encPath(hit.path)}?ref=${GH_REPO.branch}`, { headers: { Accept: 'application/vnd.github.raw' } });
     return r.ok ? URL.createObjectURL(await r.blob()) : null;
+  },
+  async forms() {
+    const r = await GH.api(`/repos/${GH_REPO.owner}/${GH_REPO.repo}/contents/${FORMS_PATH}?ref=${GH_REPO.branch}`, { headers: { Accept: 'application/vnd.github.raw' } });
+    if (!r.ok) throw new Error('GitHub не отдал библиотеку: ' + r.status);
+    return r.json();
   },
   restore() {
     try { GH.token = sessionStorage.getItem(TOKEN_KEY) || localStorage.getItem(TOKEN_KEY); } catch (e) { GH.token = null; }
@@ -488,6 +508,7 @@ function validate(u, fields) {
     if (k === 'status' && !(u.kind === 'idea' ? IDEA_STATUSES : POST_STATUSES).includes(v)) throw new Error(`статус «${v}» не из списка`);
     if (k === 'plan_date' && !/^\d{4}-\d{2}-\d{2}$/.test(v)) throw new Error('дата должна быть ГГГГ-ММ-ДД');
     if (k === 'pillar') { if (!PMAP[v]) throw new Error('неизвестный пиллар'); v = PMAP[v].link; }
+    if (k === 'format_pick' && !/^V-\d{2,3}$/.test(v)) throw new Error('форма — номер вида V-12');
     if (k === 'my_score') { v = Number(v); if (!(v >= 1 && v <= 5)) throw new Error('оценка — от 1 до 5'); }
     if (k === 'my_elo' || k === 'my_duels') { v = Math.round(Number(v)); if (!(v >= 0)) throw new Error(`${k}: нужно число`); }
     out[k] = v;
@@ -497,7 +518,7 @@ function validate(u, fields) {
 function commitMessage(u, fields) {
   const parts = Object.entries(fields).map(([k, v]) => ({
     status: `статус → ${v}`, plan_date: v ? `в план на ${v}` : 'убран из плана', my_score: v ? `оценка ${v}` : 'оценка снята',
-    pillar: `пиллар ${normPillar(v) || 'снят'}`, my_elo: 'дуэль',
+    pillar: `пиллар ${normPillar(v) || 'снят'}`, my_elo: 'дуэль', format_pick: v ? `форма ${v}` : 'форма снята',
   })[k]).filter(Boolean);
   return `пульт: ${u.id} ${parts.join(', ')}`;
 }
@@ -628,6 +649,8 @@ function renderWhere() {
     : `<span class="where" title="Правки пишутся в файлы на этом маке">${icon('hard-drive')}На маке</span>`;
 }
 function renderFilters() {
+  $('#filters').classList.toggle('static', S.view === 'forms'); // у форм фишек много: не липнут к верху
+  if (S.view === 'forms') { $('#filters').innerHTML = formFiltersHtml(); filtersTail(); return; }
   const base = S.units.filter(u => S.f.hidden || !(u.stage === 'отклонено' || u.archived));
   const cnt = k => base.filter(u => (k === 'none' ? !u.pillar : u.pillar === k)).length;
   const pchips = [['all', 'Все', null, base.length], ...PILLARS.map(p => [p.code, pName(p), p.code, cnt(p.code)]), ['none', 'Без пиллара', 'none', cnt('none')]];
@@ -638,6 +661,9 @@ function renderFilters() {
     <label class="toggle"><input type="checkbox" id="noposted" ${S.f.noPosted ? 'checked' : ''}>Скрыть идеи, ставшие постами<span class="c">${S.units.filter(becamePost).length}</span></label>
     <label class="toggle"><input type="checkbox" id="hidden" ${S.f.hidden ? 'checked' : ''}>Показать отклонённые и архив</label>
     <label class="toggle"><input type="checkbox" id="cmtonly" ${S.f.cmt ? 'checked' : ''}>${icon('message-circle')}Только с комментариями, которые Claude ещё не учёл<span class="c">${S.units.filter(u => u.cmtOpen).length}</span></label>`;
+  filtersTail();
+}
+function filtersTail() {
   const ideas = S.units.filter(u => u.kind === 'idea' && ['идея', 'в работе'].includes(u.stage) && !becamePost(u)).length;
   const live = S.units.filter(u => u.kind === 'post' && !u.archived && ['идея', 'в работе', 'черновик', 'готов'].includes(u.stage)).length;
   $('#counts').textContent = `${ideas} идей в банке · ${live} постов в работе`;
@@ -657,6 +683,125 @@ function renderIdeas() {
       <label class="hint">Порядок&nbsp;<select class="sel" id="sort">${SORTS.map(([k, n]) => `<option value="${k}" ${S.sort === k ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select></label></div>
     ${list.length ? `<div class="grid">${list.slice(0, lim).map(cardHtml).join('')}</div>` : `<div class="empty">Под фильтр ничего не попало.</div>`}
     ${list.length > lim ? `<p style="text-align:center"><button class="btn" data-expand="ideas">Показать ещё ${list.length - lim}</button></p>` : ''}`;
+}
+
+/* ---------- экран «Формы»: библиотека форм для картинок постов (21.10.2026) ---------- */
+async function loadForms() {
+  if (S.forms || S.formsLoading) return;
+  S.formsLoading = true;
+  try {
+    const lib = await Store.forms();
+    S.forms = lib;
+    S.formBy = Object.fromEntries(lib.forms.map(f => [f.id, f]));
+    S.formsErr = null;
+  } catch (e) { S.formsErr = e.message; }
+  finally { S.formsLoading = false; }
+  render();
+}
+function formPass(f, skip = '') {
+  if (skip !== 'fam' && S.ff.fam !== 'all' && f.fam !== S.ff.fam) return false;
+  if (skip !== 'tier' && S.ff.tier !== 'all' && f.tier !== S.ff.tier) return false;
+  if (S.q) {
+    const hay = [f.id, f.name, f.thought, f.how, f.use, f.ours, f.src].join(' ').toLowerCase();
+    if (!S.q.toLowerCase().split(/\s+/).filter(Boolean).every(w => hay.includes(w))) return false;
+  }
+  return true;
+}
+function formFiltersHtml() {
+  const L = S.forms;
+  if (!L) return '';
+  const nf = k => L.forms.filter(f => formPass(f, 'fam') && (k === 'all' || f.fam === k)).length;
+  const nt = k => L.forms.filter(f => formPass(f, 'tier') && (k === 'all' || f.tier === k)).length;
+  return `
+    <div class="fgroup"><span class="flabel">Что хочешь сказать</span>${[['all', '', 'Все'], ...L.families.map(x => [x.id, x.icon, x.name])].map(([k, ic, n]) => `<button class="chip" data-ff="${k}" aria-pressed="${S.ff.fam === k}">${ic ? `<span class="ficon">${ic}</span>` : ''}${esc(n)}<span class="c">${nf(k)}</span></button>`).join('')}</div>
+    <div class="fgroup"><span class="flabel">Как работала у нас</span>${[['all', '', 'Любая'], ...Object.entries(L.tiers).map(([k, v]) => [k, v.icon, v.name])].map(([k, ic, n]) => `<button class="chip" data-ft="${k}" aria-pressed="${S.ff.tier === k}">${ic ? `<span class="ficon">${ic}</span>` : ''}${esc(n)}<span class="c">${nt(k)}</span></button>`).join('')}</div>`;
+}
+const flagMark = x => (S.forms.flags[x] || '').split(' ')[0];
+function formCardHtml(f) {
+  const T = S.forms.tiers[f.tier];
+  return `<article class="card fcard" data-form="${f.id}">
+    <div class="fsvg">${f.svg}</div>
+    <div class="row"><span class="uid">${f.id}</span><span class="spacer"></span>${f.flags.map(x => `<span class="fflag" data-tip="${esc(S.forms.flags[x])}">${flagMark(x)}</span>`).join('')}<span class="fflag" data-tip="${esc(T.name)}">${T.icon}</span></div>
+    <h3>${esc(f.name)}</h3>
+    <p class="pv">${esc(f.thought)}</p>
+  </article>`;
+}
+function formsList() { return S.forms ? S.forms.forms.filter(f => formPass(f)) : []; }
+function renderForms() {
+  if (!S.forms) {
+    if (!S.formsErr) loadForms();
+    return `<div class="empty">${S.formsErr ? `Не удалось загрузить библиотеку форм: ${esc(S.formsErr)}.<br><button class="btn" data-formsretry>${icon('rotate-cw')}Ещё раз</button>` : 'Загружаю библиотеку форм…'}</div>`;
+  }
+  const L = S.forms;
+  const list = formsList();
+  const pu = S.pick && S.pickVia === 'lib' ? S.by[S.pick] : null;
+  const bar = pu ? `<div class="note pickbar">${icon('mouse-pointer-click')}<span>Выбираешь форму для <b>${esc(pu.id)}</b> «${esc(pu.title)}». Открой форму и нажми «Взять эту».</span><button class="btn" data-pickcancel>${icon('x')}Отмена</button></div>` : '';
+  const head = `<div class="viewhead"><h1>Формы</h1><span class="hint">${list.length} из ${L.count} · схема — силуэт: что форма утверждает, пока подписей нет</span></div>${bar}`;
+  if (!list.length) return head + '<div class="empty">Под фильтр ничего не попало.</div>';
+  if (S.ff.fam !== 'all' || S.q) return head + `<div class="grid forms">${list.map(formCardHtml).join('')}</div>`;
+  return head + L.families.map(fm => {
+    const items = list.filter(f => f.fam === fm.id);
+    return items.length ? `<h2 class="fam-h"><span class="ficon">${fm.icon}</span>${esc(fm.name)}<span class="c">${items.length}</span></h2><div class="grid forms">${items.map(formCardHtml).join('')}</div>` : '';
+  }).join('');
+}
+/* карточка формы в боковой панели; в режиме выбора внизу кнопка «Взять эту» */
+function renderFormDrawer(fresh) {
+  const id = S.drawer.slice(5);
+  const f = S.formBy[id];
+  if (!f) { if (!S.forms && !S.formsErr) loadForms(); else closeDrawer(); return; }
+  const sig = S.drawer + '|' + (S.pick || '');
+  if (!fresh && $('.drawer') && S.drawn === sig) return;
+  S.drawn = sig;
+  const fm = S.forms.families.find(x => x.id === f.fam);
+  const T = S.forms.tiers[f.tier];
+  const pu = S.pick ? S.by[S.pick] : null;
+  const rows = [['Как устроена', f.how], ['Ёмкость', f.units], ['Как применить у нас', f.use], ['Наши выпуски', f.ours], ['Доказательства', f.ev], ['Чем рискуем', f.risk], ['Откуда форма', f.src]];
+  $('#drawer-root').innerHTML = `<div class="scrim" data-close></div>
+  <aside class="drawer" role="dialog" aria-label="${esc(f.id + ' ' + f.name)}">
+    <div class="dhead"><div class="row"><span class="uid">${f.id}</span><span class="kind">${esc(fm ? fm.name : '')}</span><span class="spacer"></span>
+      <button class="iconbtn" data-formstep="-1" title="Предыдущая (←)" aria-label="Предыдущая форма">${icon('chevron-left')}</button>
+      <button class="iconbtn" data-formstep="1" title="Следующая (→)" aria-label="Следующая форма">${icon('chevron-right')}</button>
+      <button class="iconbtn" data-close aria-label="Закрыть">${icon('x')}</button></div>
+      <h2>${esc(f.name)}</h2></div>
+    <div class="dbody">
+      <div class="fbig">${f.svg}</div>
+      <p class="fthought">${esc(f.thought)}</p>
+      <div class="tags"><span class="tag ${TIER_TAG[f.tier] || ''}">${T.icon} ${esc(T.name)}</span>${f.flags.map(x => `<span class="tag">${esc(S.forms.flags[x])}</span>`).join('')}</div>
+      <dl class="fdl">${rows.filter(r => r[1] && r[1] !== '—').map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl>
+    </div>
+    ${pu ? `<div class="decide"><div class="dnow">Форма картинки для ${esc(pu.id)} · ${esc(pu.title)}</div>
+      <div class="dbtns two">${S.pickVia === 'drawer' ? `<button class="dbtn" data-backpost>${icon('arrow-left')}К посту</button>` : `<button class="dbtn" data-close>Смотреть дальше</button>`}
+      <button class="dbtn yes" data-pickform="${f.id}" aria-pressed="${pu.format_pick === f.id}">${icon('check')}${pu.format_pick === f.id ? 'Уже выбрана' : 'Взять эту'}</button></div></div>` : ''}
+  </aside>`;
+  icons();
+}
+function formStep(d) {
+  const list = formsList();
+  const i = list.findIndex(f => 'form:' + f.id === S.drawer);
+  if (i < 0 || !list.length) return;
+  openDrawer('form:' + list[(i + d + list.length) % list.length].id);
+}
+/* блок в карточке поста: 2–3 варианта формы от Claude большими плитками + выбор из библиотеки */
+function formBlockHtml(u) {
+  const live = u.kind === 'post' && !u.archived && u.stage !== 'опубликован';
+  if (!u.form_options.length && !u.format_pick && !live) return '';
+  if (!S.forms && !S.formsErr) loadForms();
+  const ids = [...u.form_options];
+  if (u.format_pick && !ids.includes(u.format_pick)) ids.unshift(u.format_pick);
+  const tile = (id, i) => {
+    const f = S.formBy[id] || { id, name: S.forms ? 'нет в библиотеке' : '…', thought: '', svg: '' };
+    const on = u.format_pick === id;
+    return `<div class="fopt${on ? ' on' : ''}">
+      <button class="fsvg" data-form="${id}" title="Открыть карточку формы">${f.svg}</button>
+      <div class="fo-t"><span class="uid">${id}</span>${i === 0 && u.form_options[0] === id && u.form_options.length > 1 ? '<span class="tag green">рекомендую</span>' : ''}</div>
+      <b>${esc(f.name)}</b>${f.thought ? `<p>${esc(f.thought)}</p>` : ''}
+      <button class="dbtn${on ? ' yes' : ''}" data-setform="${on ? '' : id}">${on ? icon('check') + 'Выбрана' : 'Эту'}</button>
+    </div>`;
+  };
+  return `<div class="fblock"><p class="section-l">Форма картинки · этап 3</p>
+    ${ids.length ? `<div class="fopts">${ids.map(tile).join('')}</div>` : '<p class="hint">Вариантов от Claude пока нет. Можно выбрать самому.</p>'}
+    <div class="inline"><button class="btn" data-openlib="${esc(u.path)}">${icon('shapes')}Выбрать из библиотеки</button>${u.format_pick ? '<span class="hint">Нажми на выбранную ещё раз, чтобы снять выбор</span>' : ''}</div>
+  </div>`;
 }
 
 /* ---------- экран «Конвейер» ---------- */
@@ -1012,7 +1157,7 @@ function sendComment(u0, val0) {
     }) });
   });
 }
-function closeDrawer() { S.drawer = null; S.fixOpen = null; $('#drawer-root').innerHTML = ''; }
+function closeDrawer() { S.drawer = null; S.fixOpen = null; if (S.pickVia === 'drawer') S.pick = S.pickVia = null; $('#drawer-root').innerHTML = ''; }
 function openDrawer(key) { const fresh = S.drawer !== key; S.drawer = key; if (fresh) S.fixOpen = null; renderDrawer(fresh); }
 /* ---------- отбор идей: три кнопки и сразу следующая карточка (конвейер 2.0, 21.10.2026) ---------- */
 const DECIDE_OFF = ['стала постом', 'архив'];
@@ -1048,11 +1193,13 @@ function decideHtml(u) {
   </div>`;
 }
 function renderDrawer(fresh = false) {
+  if (String(S.drawer).startsWith('form:')) { renderFormDrawer(fresh); return; }
   const u = S.by[S.drawer];
   if (!u) { closeDrawer(); return; }
   // файл не менялся — не перерисовывать: запись соседней карточки не должна сбивать ввод в этой
-  if (!fresh && $('.drawer') && S.drawn === u.text) return;
-  S.drawn = u.text;
+  const sig = u.text + (S.forms ? '|f' : '');
+  if (!fresh && $('.drawer') && S.drawn === sig) return;
+  S.drawn = sig;
   const prevScroll = fresh ? 0 : ($('.dbody')?.scrollTop || 0);
   const statuses = u.kind === 'idea' ? IDEA_STATUSES : POST_STATUSES;
   const meta = [];
@@ -1079,7 +1226,8 @@ function renderDrawer(fresh = false) {
       <button class="iconbtn" data-close aria-label="Закрыть">${icon('x')}</button></div>
       <h2>${esc(u.title)}</h2></div>
     <div class="dbody">
-      ${u.kind === 'idea' ? `<div class="md">${mdToHtml(stripComments(u.body).replace(/^\s*# .*\n/, ''))}</div>${commentsHtml(u, false)}<details class="more"><summary>Статус, пиллар, файл</summary>` : ''}
+      ${u.kind === 'post' ? formBlockHtml(u) : ''}
+      ${u.kind === 'idea' ? `<div class="md">${mdToHtml(stripComments(u.body).replace(/^\s*# .*\n/, ''))}</div>${formBlockHtml(u)}${commentsHtml(u, false)}<details class="more"><summary>Статус, пиллар, файл</summary>` : ''}
       <div class="fields">
         <span class="k">Статус</span><select class="sel" id="d-status">${statuses.map(s => `<option ${s === u.status ? 'selected' : ''}>${esc(s)}</option>`).join('')}${statuses.includes(u.status) ? '' : `<option selected disabled>${esc(u.status)}</option>`}</select>
         <span class="k">Пиллар</span><div class="inline"><select class="sel" id="d-pillar"><option value="">— не задан</option>${PILLARS.map(p => `<option value="${p.code}" ${u.pillar === p.code ? 'selected' : ''}>${esc(pName(p))}</option>`).join('')}</select>${u.pillar_inherited ? '<span class="faint">взят из тезиса, в файле пусто</span>' : ''}</div>
@@ -1185,7 +1333,7 @@ function render() {
   const keep = {};
   $$('[data-scroll]').forEach(el => { keep[el.dataset.scroll] = el.scrollTop; });
   renderFilters();
-  const v = { ideas: renderIdeas, board: renderBoard, plan: renderPlan, stats: renderStats }[S.view] || renderIdeas;
+  const v = { ideas: renderIdeas, board: renderBoard, plan: renderPlan, forms: renderForms, stats: renderStats }[S.view] || renderIdeas;
   $('#view').innerHTML = v();
   $$('[data-scroll]').forEach(el => { if (keep[el.dataset.scroll]) el.scrollTop = keep[el.dataset.scroll]; });
   icons();
@@ -1208,7 +1356,45 @@ document.addEventListener('click', e => {
   }
   if (t.closest('[data-close]')) { closeDrawer(); return; }
   const tab = t.closest('#tabs .tab');
-  if (tab) { S.view = tab.dataset.view; savePrefs(); render(); window.scrollTo(0, 0); return; }
+  if (tab) { S.view = tab.dataset.view; S.pick = S.pickVia = null; savePrefs(); render(); window.scrollTo(0, 0); return; }
+  /* библиотека форм и выбор формы для поста */
+  const ffam = t.closest('[data-ff]');
+  if (ffam) { S.ff.fam = ffam.dataset.ff; savePrefs(); render(); return; }
+  const ftier = t.closest('[data-ft]');
+  if (ftier) { S.ff.tier = ftier.dataset.ft; savePrefs(); render(); return; }
+  if (t.closest('[data-formsretry]')) { S.formsErr = null; render(); return; }
+  const fst = t.closest('[data-formstep]');
+  if (fst) { formStep(Number(fst.dataset.formstep)); return; }
+  const fo = t.closest('[data-form]');
+  if (fo) {
+    const host = S.by[S.drawer];
+    if (host) { S.pick = host.path; S.pickVia = 'drawer'; } // плитка в карточке поста: «К посту» вернёт назад
+    openDrawer('form:' + fo.dataset.form);
+    return;
+  }
+  const lib = t.closest('[data-openlib]');
+  if (lib) { S.pick = lib.dataset.openlib; S.pickVia = 'lib'; S.pickFrom = S.view; S.drawer = null; $('#drawer-root').innerHTML = ''; S.view = 'forms'; render(); window.scrollTo(0, 0); return; }
+  if (t.closest('[data-backpost]')) { const p = S.pick; S.pick = S.pickVia = null; openDrawer(p); return; }
+  if (t.closest('[data-pickcancel]')) { const p = S.pick; S.view = S.pickFrom || 'ideas'; S.pick = S.pickVia = null; savePrefs(); render(); if (S.by[p]) openDrawer(p); return; }
+  const pf = t.closest('[data-pickform]');
+  if (pf) {
+    const u = S.by[S.pick];
+    if (!u) return;
+    const back = S.pickVia === 'lib' ? (S.pickFrom || 'ideas') : null;
+    S.pick = S.pickVia = null;
+    if (back) { S.view = back; savePrefs(); render(); }
+    openDrawer(u.path);
+    if (u.format_pick !== pf.dataset.pickform) save(u, { format_pick: pf.dataset.pickform }, { label: `${u.id}: форма ${pf.dataset.pickform}. Записано ${Store.label}` });
+    return;
+  }
+  const sf = t.closest('[data-setform]');
+  if (sf) {
+    const u = S.by[S.drawer];
+    if (!u) return;
+    const v = sf.dataset.setform || null;
+    save(u, { format_pick: v }, { label: v ? `${u.id}: форма ${v}. Записано ${Store.label}` : `${u.id}: выбор формы снят` });
+    return;
+  }
   const f = t.closest('[data-f]');
   if (f) { S.f[f.dataset.f] = f.dataset.v; savePrefs(); render(); return; }
   const kind = t.closest('[data-kind]');
@@ -1238,10 +1424,11 @@ document.addEventListener('change', e => {
 });
 let qTimer;
 $('#q').addEventListener('input', e => { clearTimeout(qTimer); qTimer = setTimeout(() => { S.q = e.target.value.trim(); render(); }, 150); });
-$('#reload').addEventListener('click', async () => { if (await load()) toast(MODE === 'gh' ? 'Данные с GitHub обновлены' : 'Файлы перечитаны', { ms: 2000 }); });
+$('#reload').addEventListener('click', async () => { if (S.view === 'forms') { S.forms = null; S.formsErr = null; } if (await load()) toast(MODE === 'gh' ? 'Данные с GitHub обновлены' : 'Файлы перечитаны', { ms: 2000 }); });
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape' && S.drawer) { closeDrawer(); return; }
   const typing = e.target.closest && e.target.closest('input, select, textarea');
+  if (String(S.drawer).startsWith('form:') && !typing && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) { e.preventDefault(); formStep(e.key === 'ArrowLeft' ? -1 : 1); return; }
   if (S.view !== 'rate' || S.rateMode !== 'duel' || S.drawer || typing || !S.loaded) return;
   if (e.key === 'ArrowLeft') { e.preventDefault(); duel('1'); }
   else if (e.key === 'ArrowRight') { e.preventDefault(); duel('0'); }

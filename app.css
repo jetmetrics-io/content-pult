@@ -397,3 +397,48 @@ details.more[open] { display: grid; gap: 14px; }
 #d-cmt:focus { box-shadow: var(--jm-ring); border-color: var(--jm-green); }
 .cmts .hint { font-size: 12.5px; line-height: 1.4; }
 .cmts .inline { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+
+/* ---------- библиотека форм (21.10.2026): сетка силуэтов, карточка формы, выбор формы у поста ---------- */
+.grid.forms { grid-template-columns: repeat(auto-fill, minmax(188px, 1fr)); gap: 12px; }
+.fcard { padding: 10px 10px 12px; gap: 7px; }
+.fcard h3 { font-size: 14.5px; -webkit-line-clamp: 2; }
+.fcard .pv { font-size: 12.5px; }
+.fcard .row .spacer { flex: 1; }
+.fflag { font-size: 13px; line-height: 1; cursor: default; }
+.fsvg { display: block; width: 100%; padding: 0; border: 0; background: var(--jm-surface); border-radius: 8px; overflow: hidden; box-shadow: 0 0 0 1px var(--jm-line); cursor: pointer; }
+.fsvg svg, .fbig svg { display: block; width: 100%; height: auto; }
+.fam-h { display: flex; align-items: baseline; gap: 10px; margin: 28px 0 12px; font-size: 17px; font-weight: 700; color: var(--jm-ink); }
+.fam-h:first-of-type { margin-top: 8px; }
+.fam-h .c { font-family: var(--jm-font-mono); font-size: 12px; font-weight: 500; color: var(--jm-faint); }
+.pickbar { align-items: center; }
+.pickbar span { flex: 1; }
+.fbig { width: 100%; max-width: 340px; margin: 0 auto; border-radius: 12px; overflow: hidden; box-shadow: 0 0 0 1px var(--jm-line); flex: none; }
+.fthought { margin: 0; padding: 10px 14px; border-left: 3px solid var(--jm-green); background: var(--jm-green-tint-soft); border-radius: 0 8px 8px 0; font-size: 16px; font-weight: 600; line-height: 1.4; color: var(--jm-ink); }
+.fdl { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 10px 14px; margin: 0; font-size: 14px; line-height: 1.5; }
+.fdl dt { color: var(--jm-muted); font-size: 13px; }
+.fdl dd { margin: 0; color: var(--jm-text); }
+.fblock { display: grid; gap: 10px; }
+.fblock .hint { margin: 0; font-size: 13px; color: var(--jm-muted); }
+.fopts { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+.fopt { display: flex; flex-direction: column; gap: 6px; padding: 8px; border: var(--jm-border); border-radius: var(--jm-r-md); background: var(--jm-surface); }
+.fopt.on { border-color: var(--jm-green); box-shadow: 0 0 0 2px var(--jm-green-tint); }
+.fopt b { font-size: 13.5px; line-height: 1.3; color: var(--jm-ink); }
+.fopt p { margin: 0; font-size: 12.5px; line-height: 1.4; color: var(--jm-muted); }
+.fopt .dbtn { height: 44px; font-size: 15px; margin-top: auto; }
+.fo-t { display: flex; align-items: center; gap: 6px; }
+@media (max-width: 760px) {
+  .grid.forms { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .fcard .pv { -webkit-line-clamp: 4; }
+  .fdl { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+  .fdl dd { margin-bottom: 10px; }
+  .fbig { max-width: 280px; }
+}
+.ficon { margin-right: 2px; }
+.fam-h .ficon { margin-right: 0; }
+.filters.static { position: static; }
+@media (max-width: 760px) {
+  .filters.static .fgroup { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin: 0 -12px; padding: 0 12px; }
+  .filters.static .fgroup::-webkit-scrollbar { display: none; }
+  .filters.static .chip { flex: none; }
+  .filters.static .flabel { flex: none; }
+}
