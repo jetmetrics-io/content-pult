@@ -171,7 +171,7 @@
   --jm-cs-divider:               var(--jm-line);
   --jm-cs-accent-word:           #FFE58A;                /* жёлтое слово в шапке на цветном фоне */
   --jm-cs-grid-on-color:         rgba(255,255,255,.07);
-  --jm-cs-grid-on-yellow:        rgba(173,173,173,.37);
+  --jm-cs-grid-on-yellow:        rgba(0,0,0,.06);        /* на жёлтом заголовок чёрный (ink): белый 1,6 : 1 тает, решение 21.10 */
   /* Фоны листа: bg / сетка / заголовок / акцент / ореол ключевой */
   --jm-cs-sheet-blue:            var(--jm-blue);
   --jm-cs-sheet-purple:          var(--jm-purple);
@@ -182,9 +182,52 @@
   --jm-cs-r-m:     10px;  /* зона, текстовый блок, легенда, плашка автора */
   --jm-cs-stroke-thin:  1px;
   --jm-cs-stroke-base:  2px;
-  --jm-cs-stroke-trunk: 4px;  /* ствол карты, пара 4 / 2 в волне 1 */
+  --jm-cs-stroke-trunk: 4px;  /* ствол карты: 4, выбор Дмитрия 21.10 в паре 4 / 2 */
   --jm-cs-margin:  40px;  /* поле листа 1200 × 1500 */
   --jm-cs-gutter:  20px;  /* между блоками; пара 20 / 16 в волне 1 */
+  /* v2 · 22.10.2026: листы-формы — светлые фоны, оттенки cs-hue, обводки 3 / 6, тень (design_system/02_все_форматы.md) */
+  --jm-cs-title-dark:             #333333;                /* заголовок на светлых фонах */
+  --jm-cs-grid-on-light:          rgba(173,173,173,.37);
+  --jm-cs-grid-on-rose:           rgba(35,35,35,.07);
+  --jm-cs-sheet-white:            var(--jm-surface);
+  --jm-cs-sheet-light:            #F1F1F1;
+  --jm-cs-sheet-sky:              #DEEBFF;
+  --jm-cs-sheet-rose:             #AE6567;
+  --jm-cs-hue-green-solid:        var(--jm-green);
+  --jm-cs-hue-green-tint:         var(--jm-cs-role-result-fill);
+  --jm-cs-hue-green-mid:          #96D4C0;
+  --jm-cs-hue-green-stroke:       var(--jm-green);
+  --jm-cs-hue-green-ink:          #0E6552;
+  --jm-cs-hue-blue-solid:         var(--jm-blue);
+  --jm-cs-hue-blue-tint:          var(--jm-cs-role-action-fill);
+  --jm-cs-hue-blue-mid:           #C7D6EE;
+  --jm-cs-hue-blue-stroke:        var(--jm-blue);
+  --jm-cs-hue-blue-ink:           #1F5FC4;
+  --jm-cs-hue-purple-solid:       var(--jm-purple);
+  --jm-cs-hue-purple-tint:        #E4D9FA;
+  --jm-cs-hue-purple-mid:         #C7B4F0;
+  --jm-cs-hue-purple-stroke:      var(--jm-purple);
+  --jm-cs-hue-purple-ink:         #5B3FA8;
+  --jm-cs-hue-yellow-solid:       #D9AE15;
+  --jm-cs-hue-yellow-tint:        var(--jm-cs-role-diagnostic-fill);
+  --jm-cs-hue-yellow-mid:         #E9D9A2;
+  --jm-cs-hue-yellow-stroke:      var(--jm-yellow);
+  --jm-cs-hue-yellow-ink:         #8A6A00;
+  --jm-cs-hue-coral-solid:        var(--jm-coral);
+  --jm-cs-hue-coral-tint:         var(--jm-cs-role-cost-fill);
+  --jm-cs-hue-coral-mid:          #FAB3B5;
+  --jm-cs-hue-coral-stroke:       var(--jm-coral);
+  --jm-cs-hue-coral-ink:          #B42225;
+  --jm-cs-hue-grey-solid:         #494949;
+  --jm-cs-hue-grey-tint:          #E5E5E5;
+  --jm-cs-hue-grey-mid:           #D9D9D9;
+  --jm-cs-hue-grey-stroke:        var(--jm-cs-zone-stroke);
+  --jm-cs-hue-grey-ink:           var(--jm-text);
+  --jm-cs-icon-stroke:             var(--jm-cs-hue-green-solid);  /* линейная иконка, режим hue; on-solid — var(--jm-surface), ink — var(--jm-text) */
+  --jm-cs-stroke-frame: 3px;  /* цветная рамка раздела, плитки, ярлыка */
+  --jm-cs-stroke-hero:  6px;  /* ось шкалы, главная связь анатомии */
+  --jm-cs-shadow-lift:  0 4px 10px rgba(0,0,0,.1);  /* одна тень, по умолчанию выключена */
+  --jm-cs-columns5:     208px; /* мега-сетка 5 × 208 + 4 × 20 */
 }
 
 /* ============================================================

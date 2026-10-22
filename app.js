@@ -30,16 +30,6 @@ const IDEA_STATUSES = ['новая', 'в работе', 'отложена', 'о�
 const POST_STATUSES = ['идея', 'в работе', 'черновик', 'готов', 'опубликован', 'парковка', 'архив'];
 const STAT_KEYS = ['li_impressions', 'li_reach', 'li_reactions', 'li_comments', 'li_saves', 'li_reposts', 'li_sends',
   'li_profile_views', 'li_followers', 'tg_views', 'tg_reactions', 'tg_forwards', 'tg_comments', 'tg_clicks', 'tg_followers'];
-const STAGES = [
-  { key: 'идея', name: 'Идея', icon: 'lightbulb' },
-  { key: 'в работе', name: 'В работе', icon: 'hammer' },
-  { key: 'черновик', name: 'Черновик', icon: 'pen-line' },
-  { key: 'готов', name: 'Готов', icon: 'circle-check' },
-  { key: 'опубликован', name: 'Опубликован', icon: 'megaphone' },
-  { key: 'парковка', name: 'Парковка', icon: 'circle-pause' },
-];
-const REJECTED = { key: 'отклонено', name: 'Отклонено', icon: 'trash-2' };
-const IDEA_BY_STAGE = { 'идея': 'новая', 'в работе': 'в работе', 'парковка': 'отложена', 'отклонено': 'отклонена' };
 const SRC = [['all', 'Все'], ['batch', 'Партии с 21.10'], ['cards', 'Карточки сент.–окт.'], ['old', 'Старый банк'], ['b0610', 'Банк 06.10'], ['posts', 'Посты']];
 // звёзды и дуэли сняты 21.10.2026 (конвейер 2.0): порядок только по номеру или свежести
 const SORTS = [['id', 'По номеру'], ['new', 'Сначала новые']];
@@ -51,6 +41,19 @@ const TIER_TAG = { win: 'green', cond: 'yellow', weak: 'coral', none: '' };
 /* конвейер 2.0: этап поста (поле stage, «2 детали») и чей ход (поле turn: claude · дмитрий) */
 const STEPS = { 2: 'Детали', 3: 'Формат', 4: 'Прототип', 5: 'Медиа', 6: 'Фактура', 7: 'Текст' };
 const stepVal = n => `${n} ${STEPS[n].toLowerCase()}`;
+/* экран «Конвейер» и воронка в «Обзоре» — по этапам (22.10.2026): идея → детали → … → вышло */
+const LANES = [
+  { n: 1, name: 'Идея', icon: 'lightbulb' },
+  { n: 2, name: 'Детали', icon: 'search' },
+  { n: 3, name: 'Формат', icon: 'shapes' },
+  { n: 4, name: 'Прототип', icon: 'drafting-compass' },
+  { n: 5, name: 'Медиа', icon: 'image' },
+  { n: 6, name: 'Фактура', icon: 'clipboard-list' },
+  { n: 7, name: 'Текст', icon: 'pen-line' },
+  { n: 8, name: 'Вышло', icon: 'megaphone' },
+];
+const NO_LANE = { n: 0, name: 'Без этапа', icon: 'circle-help' };
+const WHO = { me: 'Ждут тебя', claude: 'У Claude', park: 'Отложены' };
 const PREF_KEY = 'pult:prefs:v2';
 const TOKEN_KEY = 'pult:gh-token';
 
@@ -294,7 +297,9 @@ function buildUnit(file) {
     const st = parseInt(String(fields.stage ?? ''), 10);
     u.step = STEPS[st] ? st : null;
     u.turn = fields.turn ? String(fields.turn).trim() : null;
+    u.was_stage = STEPS[asNum(fields.was_stage)] ? asNum(fields.was_stage) : null;
   }
+  u.archived_on = asDate(fields.archived);
   return u;
 }
 function buildThesis(file) {
@@ -581,8 +586,10 @@ function srcGroup(u) {
   return 'cards';
 }
 const srcName = u => (SRC.find(x => x[0] === srcGroup(u)) || [])[1];
-function pass(u) {
-  if (!S.f.hidden && (u.stage === 'отклонено' || u.archived)) return false;
+function pass(u) { return passIn(u, S.f.hidden); }
+/* те же фильтры; hidden — пропускать ли отклонённое и архив (воронке нужны отсеянные при любом фильтре) */
+function passIn(u, hidden) {
+  if (!hidden && (u.stage === 'отклонено' || u.archived)) return false;
   if (S.f.pillar !== 'all' && (S.f.pillar === 'none' ? !!u.pillar : u.pillar !== S.f.pillar)) return false;
   if (S.f.src !== 'all' && srcGroup(u) !== S.f.src) return false;
   if (S.f.cmt && !u.cmtOpen) return false;
@@ -645,11 +652,11 @@ function cardHtml(u) {
     ${tagsHtml(u)}
   </article>`;
 }
-function miniHtml(u) {
-  return `<div class="mini" draggable="true" data-drag="${esc(u.path)}" data-open="${esc(u.path)}">
+function miniHtml(u, { drag = true, note = '' } = {}) {
+  return `<div class="mini${drag ? '' : ' static'}" ${drag ? `draggable="true" data-drag="${esc(u.path)}"` : ''} data-open="${esc(u.path)}">
     <div class="row"><span class="uid">${esc(u.id)}</span><span class="pdot" style="background:var(--p-${u.pillar || 'none'})" title="${esc(PMAP[u.pillar] ? pName(PMAP[u.pillar]) : 'без пиллара')}"></span>
       <span class="r">${u.cmtOpen ? `<span class="tag cmt" title="Комментарии, которые Claude ещё не учёл">${icon('message-circle')}${u.cmtOpen}</span>` : ''}${u.plan_date ? `<span class="tag green">${icon('calendar-days')}${dShort(u.plan_date)}</span>` : ''}${u.my_score ? `<span title="Твоя оценка">★${u.my_score}</span>` : ''}</span></div>
-    <div class="t">${esc(u.title)}</div>
+    <div class="t">${esc(u.title)}</div>${note ? `<div class="mnote">${esc(note)}</div>` : ''}
   </div>`;
 }
 
@@ -818,37 +825,73 @@ function formBlockHtml(u) {
   </div>`;
 }
 
-/* ---------- экран «Конвейер» ---------- */
-function colSort(key) {
-  if (key === 'опубликован') return (a, b) => String(b.published_date || '').localeCompare(String(a.published_date || '')) || (a.id < b.id ? 1 : -1);
-  if (key === 'идея' || key === 'парковка') return sorter('rank');
-  return (a, b) => String(a.plan_date || '9999').localeCompare(String(b.plan_date || '9999')) || (a.id < b.id ? 1 : -1);
-}
-function renderBoard() {
-  const units = S.units.filter(u => pass(u) && !becamePost(u));
-  const cols = S.f.hidden ? [...STAGES, REJECTED] : STAGES;
-  return `<div class="viewhead"><h1>Конвейер</h1><span class="hint">Перетащи карточку в колонку — статус запишется в файл. Идею в черновик не перевести: черновик появляется, когда из идеи делают пост.</span></div>
-    <div class="board" style="grid-template-columns:repeat(${cols.length}, minmax(220px, 1fr))">${cols.map(c => {
-      const items = units.filter(u => u.stage === c.key).sort(colSort(c.key));
-      const lim = S.expand['col:' + c.key] ? items.length : LIMIT;
-      return `<section class="col" data-drop="${c.key}"><div class="colhead">${icon(c.icon)}${c.name}<span class="n">${items.length}</span></div>
-        <div class="colbody" data-scroll="col:${c.key}">${items.slice(0, lim).map(miniHtml).join('')}
-        ${items.length > lim ? `<button class="more" data-expand="col:${c.key}">ещё ${items.length - lim}</button>` : ''}</div></section>`;
-    }).join('')}</div>
-    <div class="trash" id="trash" data-drop="отклонено" hidden>${icon('trash-2')}Отклонить идею</div>`;
-}
-function moveTo(u, stage) {
-  if (!u || u.stage === stage) return;
-  const name = (STAGES.find(s => s.key === stage) || REJECTED).name.toLowerCase();
-  const label = `${u.id}: ${u.stage} → ${name}. Записано ${Store.label}`;
+/* ---------- экран «Конвейер»: колонки — этапы, в колонке сверху «ждут тебя», ниже «у Claude» (22.10.2026) ---------- */
+/* где карточка: n — этап (0 — пост со старым статусом без этапа), who — чей ход; null — вне конвейера */
+function laneOf(u) {
+  if (u.archived || u.stage === 'отклонено' || becamePost(u)) return null;
   if (u.kind === 'idea') {
-    const st = IDEA_BY_STAGE[stage];
-    if (!st) { toast(`${u.id} — ещё идея, не пост. Черновик появится, когда из неё сделают пост: скажи Claude «делаем ${u.id}».`, { kind: 'warn', ms: 8000 }); return; }
-    save(u, { status: st }, { label });
-  } else {
-    if (stage === 'отклонено') { toast('Пост не отклоняют — отправь его в парковку.', { kind: 'warn' }); return; }
-    save(u, { status: stage }, { label });
+    if (u.status === 'в работе') return { n: 2, who: 'claude' }; // взята, пост с «Деталями» ещё не заведён
+    if (u.status === 'отложена') return { n: 1, who: 'park' };
+    return { n: 1, who: u.cmtOpen ? 'claude' : 'me' };
   }
+  if (u.stage === 'опубликован') return { n: 8, who: null };
+  if (u.step === 7) return { n: 7, who: 'me' }; // текст пишет Дмитрий
+  if (u.step) return { n: u.step, who: postWaits(u) ? 'me' : 'claude' };
+  return { n: 0, who: null };
+}
+const laneSort = n => (n === 8
+  ? (a, b) => String(b.published_date || '').localeCompare(String(a.published_date || '')) || (a.id < b.id ? 1 : -1)
+  : (a, b) => String(a.plan_date || '9999').localeCompare(String(b.plan_date || '9999')) || (a.id < b.id ? -1 : 1));
+/* раскладка по этапам: { n: { all: [...], me: [...], claude: [...], park: [...] } } */
+function laneMap(units) {
+  const m = {};
+  [NO_LANE, ...LANES].forEach(l => { m[l.n] = { all: [], me: [], claude: [], park: [] }; });
+  units.forEach(u => { const l = laneOf(u); if (!l) return; m[l.n].all.push(u); if (l.who) m[l.n][l.who].push(u); });
+  return m;
+}
+/* откуда отсеяна карточка: идея — на отборе, пост — с этапа was_stage */
+const dropStep = u => (u.kind === 'idea' ? (u.status === 'отклонена' ? 1 : null) : (u.archived ? u.was_stage : null));
+function renderBoard() {
+  const units = S.units.filter(pass);
+  const m = laneMap(units);
+  const lanes = [...(m[0].all.length ? [NO_LANE] : []), ...LANES];
+  // сверху отсеянное конвейером 2.0 (идеи партий и посты с этапа), ниже старый архив, свежее — выше
+  const fresh = u => (dropStep(u) && (u.kind === 'post' || u.batch) ? 0 : 1);
+  const out = S.f.hidden ? units.filter(u => (u.archived || u.stage === 'отклонено') && !becamePost(u))
+    .sort((a, b) => fresh(a) - fresh(b) || String(b.archived_on || '').localeCompare(String(a.archived_on || '')) || (a.id < b.id ? 1 : -1)) : [];
+  const cols = [...lanes.map(l => ({ ...l, items: m[l.n].all })), ...(S.f.hidden ? [{ n: 'out', name: 'Отсеяно и архив', icon: 'archive', items: out }] : [])];
+  const strip = lanes.map(l => {
+    const x = m[l.n];
+    return `<button class="ls${x.all.length ? '' : ' zero'}" data-lane="${l.n}" title="${esc(`${l.name}: ${x.all.length}${x.me.length ? ` · ждут тебя ${x.me.length}` : ''}${x.claude.length ? ` · у Claude ${x.claude.length}` : ''}`)}">
+      ${l.n ? `<span class="ls-n">${l.n}</span>` : ''}${esc(l.name)}<b>${x.all.length}</b>${x.me.length && l.n < 8 ? `<span class="ls-me">${x.me.length}</span>` : ''}</button>`;
+  }).join(`<span class="ls-arr">${icon('chevron-right')}</span>`);
+  const minis = (items, key, note) => {
+    const lim = S.expand[key] ? items.length : LIMIT;
+    return items.slice(0, lim).map(u => miniHtml(u, { drag: false, note: note ? note(u) : '' })).join('')
+      + (items.length > lim ? `<button class="more" data-expand="${key}">ещё ${items.length - lim}</button>` : '');
+  };
+  const outNote = u => { const s = dropStep(u); return s === 1 ? 'отсеяна на отборе' : s ? `отсеян на этапе «${STEPS[s]}»` : 'архив'; };
+  const col = c => {
+    let body;
+    if (!c.items.length) body = '<p class="lempty">пусто</p>';
+    else if (c.n === 'out') body = minis(c.items, 'lane:out', outNote);
+    else if (c.n === 8 || c.n === 0) body = minis(c.items.sort(laneSort(c.n)), `lane:${c.n}`);
+    else {
+      body = ['me', 'claude', 'park'].filter(w => m[c.n][w].length).map(w => {
+        const items = m[c.n][w].sort(laneSort(c.n));
+        return `<div class="lgroup ${w}">${c.n === 7 && w === 'me' ? 'Пишешь ты' : WHO[w]}<span class="n">${items.length}</span></div>${minis(items, `lane:${c.n}:${w}`)}`;
+      }).join('');
+    }
+    const me = c.n >= 1 && c.n <= 6 ? m[c.n].me.length : 0;
+    return `<section class="col lane${c.items.length ? '' : ' empty'}" id="lane-${c.n}">
+      <div class="colhead">${icon(c.icon)}<span>${typeof c.n === 'number' && c.n ? c.n + ' · ' : ''}${esc(c.name)}</span><span class="n">${c.items.length}</span></div>
+      ${me ? `<button class="btn walk" data-walk="${c.n}">${icon('play')}Пройти ${me}</button>` : ''}
+      <div class="colbody" data-scroll="lane:${c.n}">${body}</div></section>`;
+  };
+  const width = c => (c.items.length ? 'minmax(220px, 1fr)' : 'minmax(118px, .5fr)'); // пустой этап уже, но виден: воронка целиком
+  return `<div class="viewhead"><h1>Конвейер</h1><span class="hint">Колонка — этап. Сверху в колонке то, что ждёт твоего решения, ниже — что делаю я. Карточку двигают только кнопки в ней: ✓ берём, ✎ доработать, ✕ нафиг.</span></div>
+    <div class="lanes-strip">${strip}</div>
+    <div class="board" style="grid-template-columns:${cols.map(width).join(' ')}">${cols.map(col).join('')}</div>`;
 }
 
 /* ---------- экран «План» ---------- */
@@ -1023,7 +1066,7 @@ function hbars(rows, opt = {}) {
   return `<div class="hbars">${rows.map(r => `<div class="hb" data-tip="${esc(r.tip || '')}">
       <span class="name">${r.color ? `<span class="pdot" style="background:${r.color}"></span>` : ''}${esc(r.name)}</span>
       <span class="track">${r.v > 0 ? `<span class="fill" style="width:max(3px, ${(r.v / max) * 100}%);background:${r.fill || 'var(--jm-green)'}"></span>` : ''}${r.target != null ? `<span class="tgt" style="left:calc(${(r.target / max) * 100}% - 1px)"></span>` : ''}</span>
-      <span class="val">${r.label}</span></div>`).join('')}</div>`;
+      <span class="val">${r.label}</span>${r.note ? `<span class="hnote">${esc(r.note)}</span>` : ''}</div>`).join('')}</div>`;
 }
 function tableHtml(head, rows) {
   return `<table class="tbl"><thead><tr>${head.map(h => `<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${rows.map(r => `<tr>${r.map(c => `<td>${esc(c)}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
@@ -1053,12 +1096,21 @@ function renderStats() {
   const pub90 = pub.filter(u => u.published_date && u.published_date >= since(90));
   const plan42 = live.filter(u => u.plan_date && u.plan_date >= tIso && u.plan_date <= isoOf(addDays(today, 42)) && u.stage !== 'опубликован');
   const plan14 = plan42.filter(u => u.plan_date <= isoOf(addDays(today, 14)));
-  const st = k => live.filter(u => u.stage === k).length;
+  // воронка конвейера 2.0: где карточки сейчас и сколько отсеяно на каждом этапе; «Вышло» — только посты, прошедшие этапы
+  const m = laneMap(S.units.filter(pass));
+  const dropped = {};
+  S.units.filter(u => passIn(u, true) && (u.kind === 'post' || u.batch)).forEach(u => { const s = dropStep(u); if (s) dropped[s] = (dropped[s] || 0) + 1; });
+  const sum = w => LANES.filter(l => l.n <= 6).reduce((a, l) => a + m[l.n][w].length, 0);
   const kpis = [
-    ['Идей в банке', live.filter(u => u.kind === 'idea' && u.stage === 'идея').length, 'новые, без отложенных'], ['В работе', st('в работе'), 'идеи и посты'],
-    ['Черновики', st('черновик'), 'постов'], ['Готово к выходу', st('готов'), 'постов'], ['Вышло за 30 дней', pub30.length, 'по дате публикации'], ['В плане на 2 недели', plan14.length, 'с датой в шапке'],
+    ['На отборе', m[1].all.length, 'идеи'], ['Ждут тебя', sum('me'), 'решить в пульте'], ['У Claude', sum('claude'), 'делаю я'],
+    ['Пишешь текст', m[7].all.length, 'этап 7'], ['Вышло за 30 дней', pub30.length, 'по дате публикации'], ['В плане на 2 недели', plan14.length, 'с датой в шапке'],
   ];
-  const funnel = STAGES.map(s => ({ name: s.name, v: st(s.key), label: `<b>${st(s.key)}</b>`, fill: s.key === 'парковка' ? 'var(--jm-chart-compare)' : 'var(--jm-green)', tip: `${s.name}: ${st(s.key)}` }));
+  const funnel = LANES.map(l => {
+    const x = m[l.n];
+    const v = l.n === 8 ? x.all.filter(u => u.step).length : x.all.length;
+    const bits = [x.me.length && l.n < 8 ? `${l.n === 7 ? 'пишешь ты' : 'ждут тебя'} ${x.me.length}` : '', x.claude.length ? `у Claude ${x.claude.length}` : '', dropped[l.n] ? `отсеяно ${dropped[l.n]}` : ''].filter(Boolean);
+    return { name: `${l.n} ${l.name}`, v, me: x.me.length, claude: x.claude.length, out: dropped[l.n] || 0, label: `<b>${v}</b>`, note: bits.join(' · '), tip: `${l.name}: ${v}${bits.length ? '<br>' + bits.join('<br>') : ''}` };
+  });
   const w0 = addDays(mondayOf(today), -7 * 25);
   const weeks = [];
   for (let i = 0; i < 26; i++) {
@@ -1086,9 +1138,9 @@ function renderStats() {
     <div class="panels">
       ${pillarPanel('Доли пилларов: вышло за 90 дней', `${pub90.length} постов с ${dShort(since(90))}. Черта — целевая доля из словаря пилларов.`, pub90)}
       ${pillarPanel('Доли пилларов: в плане на 6 недель', `${plan42.length} единиц с датой в плане до ${dShort(isoOf(addDays(today, 42)))}.`, plan42)}
-      <div class="panel"><h3>Конвейер</h3><p class="sub">Сколько единиц на каждом шаге. Идеи, из которых уже сделан пост, не считаются дважды.</p>
+      <div class="panel"><h3>Конвейер</h3><p class="sub">Сколько карточек сейчас на каждом этапе, чей ход и сколько отсеяно. «Вышло» — посты, прошедшие этапы с 21.10. Сколько дней карточка стоит на этапе, пока не считаем: дат переходов в файлах нет.</p>
         ${hbars(funnel)}
-        <details><summary>Таблицей</summary>${tableHtml(['Шаг', 'Штук'], funnel.map(f => [f.name, f.v]))}</details></div>
+        <details><summary>Таблицей</summary>${tableHtml(['Этап', 'Сейчас', 'Ждут тебя', 'У Claude', 'Отсеяно'], funnel.map(f => [f.name, f.v, f.me, f.claude, f.out]))}</details></div>
       <div class="panel"><h3>Ритм публикаций</h3><p class="sub">Постов в неделю за полгода, по дате публикации.${noDate ? ` У ${noDate} опубликованных даты нет — они не попали в график.` : ''}</p>
         ${rhythm}
         <details><summary>Таблицей</summary>${tableHtml(['Неделя', 'Постов', 'Какие'], weeks.filter(w => w.items.length).map(w => [`${dShort(isoOf(w.ws))} — ${dShort(isoOf(w.we))}`, w.items.length, w.items.map(u => u.id).join(', ')]))}</details></div>
@@ -1171,7 +1223,7 @@ function sendComment(u0, val0) {
     }) });
   });
 }
-function closeDrawer() { S.drawer = null; S.fixOpen = null; if (S.pickVia === 'drawer') S.pick = S.pickVia = null; $('#drawer-root').innerHTML = ''; }
+function closeDrawer() { S.drawer = null; S.fixOpen = null; S.walk = null; if (S.pickVia === 'drawer') S.pick = S.pickVia = null; $('#drawer-root').innerHTML = ''; }
 function openDrawer(key) { const fresh = S.drawer !== key; S.drawer = key; if (fresh) S.fixOpen = null; renderDrawer(fresh); }
 /* ---------- отбор идей: три кнопки и сразу следующая карточка (конвейер 2.0, 21.10.2026) ---------- */
 const DECIDE_OFF = ['стала постом', 'архив'];
@@ -1183,12 +1235,14 @@ const canDecide = u => (u.kind === 'idea' ? !DECIDE_OFF.includes(u.status) : pos
 function openNext(path) {
   // порядок — как на экране «Идеи»: те же фильтры и сортировка; идея ведёт к идее, пост — к посту
   const kind = (S.by[path] || {}).kind || 'idea';
-  const want = kind === 'idea' ? undecided : postWaits;
+  // «Пройти» в колонке конвейера: посты только этого этапа (S.walk)
+  const walk = kind === 'post' ? S.walk : null;
+  const want = kind === 'idea' ? undecided : walk ? x => postWaits(x) && x.step === walk : postWaits;
   const list = S.units.filter(x => x.kind === kind && pass(x)).sort(sorter(S.sort));
   const i = list.findIndex(x => x.path === path);
   const next = list.slice(i + 1).find(want) || list.slice(0, Math.max(i, 0)).find(want);
   if (next) openDrawer(next.path);
-  else { closeDrawer(); toast(kind === 'idea' ? 'На отборе больше ничего нет' : 'Больше ни один пост не ждёт тебя'); }
+  else { closeDrawer(); toast(kind === 'idea' ? 'На отборе больше ничего нет' : walk ? `На этапе «${STEPS[walk]}» больше ничего не ждёт тебя` : 'Больше ни один пост не ждёт тебя'); }
 }
 function decidePost(u, how) {
   if (how === 'yes') {
@@ -1466,8 +1520,18 @@ document.addEventListener('click', e => {
   if (th) { const k = th.dataset.th; S.tbl = { k, dir: S.tbl.k === k ? -S.tbl.dir : (['id', 'title', 'pillar', 'src'].includes(k) ? 1 : -1) }; render(); return; }
   const q = t.closest('[data-q]');
   if (q) { S.q = q.dataset.q; $('#q').value = S.q; S.view = 'ideas'; S.ideasKind = 'all'; savePrefs(); render(); window.scrollTo(0, 0); return; }
+  const ln = t.closest('[data-lane]');
+  if (ln) { $('#lane-' + ln.dataset.lane)?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'start' }); return; }
+  const wk = t.closest('[data-walk]');
+  if (wk) {
+    const n = Number(wk.dataset.walk);
+    const kind = n === 1 ? 'idea' : 'post';
+    const first = S.units.filter(x => x.kind === kind && pass(x) && (n === 1 ? undecided(x) : postWaits(x) && x.step === n)).sort(sorter(S.sort))[0];
+    if (first) { openDrawer(first.path); S.walk = n === 1 ? null : n; }
+    return;
+  }
   const op = t.closest('[data-open]');
-  if (op && !t.closest('select, input, a')) openDrawer(op.dataset.open);
+  if (op && !t.closest('select, input, a')) { if (!t.closest('.drawer')) S.walk = null; openDrawer(op.dataset.open); }
 });
 document.addEventListener('change', e => {
   if (e.target.id === 'hidden') { S.f.hidden = e.target.checked; savePrefs(); render(); }
@@ -1490,7 +1554,7 @@ document.addEventListener('keydown', e => {
   else if (e.key === ' ') { e.preventDefault(); duel('skip'); }
 });
 
-/* перетаскивание: конвейер (data-drop = этап) и план (data-drop-date = дата, пусто = убрать) */
+/* перетаскивание — только в плане (data-drop-date = дата, пусто = убрать). На конвейере карточку двигают кнопки решения (22.10.2026) */
 document.addEventListener('dragstart', e => {
   const d = e.target.closest && e.target.closest('[data-drag]');
   if (!d) return;
@@ -1499,17 +1563,13 @@ document.addEventListener('dragstart', e => {
   e.dataTransfer.effectAllowed = 'move';
   d.classList.add('dragging');
   tip.hidden = true;
-  const u = S.by[S.dragKey];
-  const tr = $('#trash');
-  if (tr && u && u.kind === 'idea') tr.hidden = false;
 });
 document.addEventListener('dragend', () => {
   S.dragKey = null;
   $$('.dragging').forEach(x => x.classList.remove('dragging'));
   $$('.over').forEach(x => x.classList.remove('over'));
-  const tr = $('#trash'); if (tr) tr.hidden = true;
 });
-const dropTarget = e => e.target.closest && (e.target.closest('[data-drop]') || e.target.closest('[data-drop-date]'));
+const dropTarget = e => e.target.closest && e.target.closest('[data-drop-date]');
 document.addEventListener('dragover', e => {
   const z = dropTarget(e);
   if (!z || !S.dragKey) return;
@@ -1529,7 +1589,6 @@ document.addEventListener('drop', e => {
   const u = S.by[e.dataTransfer.getData('text/plain') || S.dragKey];
   z.classList.remove('over');
   if (!u) return;
-  if (z.dataset.drop !== undefined) { moveTo(u, z.dataset.drop); return; }
   const iso = z.dataset.dropDate || null;
   if ((u.plan_date || null) === iso) return;
   save(u, { plan_date: iso }, { label: iso ? `${u.id} в плане на ${dShort(iso)}. Записано ${Store.label}` : `${u.id} убран из плана` });
