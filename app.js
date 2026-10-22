@@ -38,22 +38,29 @@ const LIMIT = 60;
 const FORMS_PATH = 'visuals/forms/library.json';
 const formId = v => (String(v || '').match(/V-\d{2,3}/) || [null])[0];
 const TIER_TAG = { win: 'green', cond: 'yellow', weak: 'coral', none: '' };
-/* конвейер 2.0: этап поста (поле stage, «2 детали») и чей ход (поле turn: claude · дмитрий) */
-const STEPS = { 2: 'Детали', 3: 'Формат', 4: 'Прототип', 5: 'Медиа', 6: 'Фактура', 7: 'Текст' };
+/* конвейер 2.0: этап поста (поле stage, «2 детали») и чей ход (поле turn: claude · дмитрий).
+   С 22.10.2026 детали и форма — один этап (решение Дмитрия): было 2 детали · 3 формат · 4 прототип · 5 медиа · 6 фактура · 7 текст */
+const STEPS = { 2: 'Детали и форма', 3: 'Прототип', 4: 'Медиа', 5: 'Фактура', 6: 'Текст' };
+const FORM_STEP = 2, TEXT_STEP = 6, OUT_LANE = 7; // где выбирают форму · текст пишет Дмитрий · «Вышло» на доске
 const stepVal = n => `${n} ${STEPS[n].toLowerCase()}`;
 /* экран «Конвейер» и воронка в «Обзоре» — по этапам (22.10.2026): идея → детали → … → вышло */
 const LANES = [
   { n: 1, name: 'Идея', icon: 'lightbulb' },
-  { n: 2, name: 'Детали', icon: 'search' },
-  { n: 3, name: 'Формат', icon: 'shapes' },
-  { n: 4, name: 'Прототип', icon: 'drafting-compass' },
-  { n: 5, name: 'Медиа', icon: 'image' },
-  { n: 6, name: 'Фактура', icon: 'clipboard-list' },
-  { n: 7, name: 'Текст', icon: 'pen-line' },
-  { n: 8, name: 'Вышло', icon: 'megaphone' },
+  { n: 2, name: 'Детали и форма', icon: 'search' },
+  { n: 3, name: 'Прототип', icon: 'drafting-compass' },
+  { n: 4, name: 'Медиа', icon: 'image' },
+  { n: 5, name: 'Фактура', icon: 'clipboard-list' },
+  { n: 6, name: 'Текст', icon: 'pen-line' },
+  { n: 7, name: 'Вышло', icon: 'megaphone' },
 ];
 const NO_LANE = { n: 0, name: 'Без этапа', icon: 'circle-help' };
 const WHO = { me: 'Ждут тебя', claude: 'У Claude', park: 'Отложены' };
+const whoName = l => (l.who === 'me' ? (l.n === TEXT_STEP ? 'пишешь ты' : 'ждёт тебя') : l.who === 'claude' ? 'у Claude' : l.who === 'park' ? 'отложена' : '');
+/* что делает Claude на этапе, что просим у Дмитрия и что будет после ✓ — для строки над кнопками (22.10.2026) */
+const DOING = { 2: 'пишет детали с 2–3 вариантами формы', 3: 'собирает прототип: все строки с числами и раскладку словами', 4: 'собирает картинку в Figma', 5: 'пишет фактуру для текста и делает EN-копию картинки' };
+const ASK = { 2: 'Прочитай детали, выбери форму и нажми ✓', 3: 'Проверь прототип: строки, числа, раскладку', 4: 'Доведи картинку и нажми ✓', 5: 'Проверь фактуру' };
+const AFTER_YES = { 2: 'Claude соберёт прототип', 3: 'Claude соберёт картинку в Figma', 4: 'Claude напишет фактуру и сделает EN-копию', 5: 'текст пишешь ты: RU, потом EN' };
+const RUN = 'Claude двигает карточки по команде «двигай конвейер».';
 const PREF_KEY = 'pult:prefs:v2';
 const TOKEN_KEY = 'pult:gh-token';
 
@@ -522,7 +529,7 @@ function validate(u, fields) {
     if (k === 'plan_date' && !/^\d{4}-\d{2}-\d{2}$/.test(v)) throw new Error('дата должна быть ГГГГ-ММ-ДД');
     if (k === 'pillar') { if (!PMAP[v]) throw new Error('неизвестный пиллар'); v = PMAP[v].link; }
     if (k === 'format_pick' && !/^V-\d{2,3}$/.test(v)) throw new Error('форма — номер вида V-12');
-    if (k === 'stage' && !/^[2-7] \S/.test(v)) throw new Error('этап — от 2 до 7');
+    if (k === 'stage' && !/^[2-6] \S/.test(v)) throw new Error('этап — от 2 до 6');
     if (k === 'turn' && !['claude', 'дмитрий'].includes(v)) throw new Error('ход — claude или дмитрий');
     if (k === 'my_score') { v = Number(v); if (!(v >= 1 && v <= 5)) throw new Error('оценка — от 1 до 5'); }
     if (k === 'my_elo' || k === 'my_duels') { v = Math.round(Number(v)); if (!(v >= 0)) throw new Error(`${k}: нужно число`); }
@@ -632,7 +639,7 @@ function dShort(iso) { if (!iso) return ''; const [, m, d] = iso.split('-').map(
 function tagsHtml(u) {
   const t = [];
   if (becamePost(u)) t.push(`<span class="tag blue">${icon('megaphone')}стала постом${u.became_post.length ? ' ' + esc(u.became_post.join(', ')) : ''}</span>`);
-  else if (u.kind === 'post' && u.step && !u.archived) t.push(`<span class="tag ${waitsMe(u) ? 'yellow' : ''}" title="${waitsMe(u) ? 'Ждёт твоего решения' : 'Ход Claude'}">${u.step} · ${STEPS[u.step]} · ${waitsMe(u) ? 'ждёт тебя' : 'у Claude'}</span>`);
+  else if (inWork(u)) { const l = laneOf(u); t.push(`<span class="tag ${l.who === 'me' ? 'yellow' : ''}" title="${l.who === 'me' ? 'Ход твой' : 'Ход Claude'}">${l.n} · ${STEPS[l.n]} · ${whoName(l)}</span>`); }
   else if (u.kind === 'post' || u.status !== 'новая') t.push(`<span class="tag">${esc(u.status)}</span>`);
   if (u.thesis) t.push(`<span class="tag" title="${esc(u.thesis_title || '')}">${esc(u.thesis)}</span>`);
   if (u.ikind === 'перепозиционирование') t.push(`<span class="tag" title="Перепозиционирование вышедшего поста">♻️${u.source_post ? ' ' + esc(u.source_post) : ''}</span>`);
@@ -643,6 +650,14 @@ function tagsHtml(u) {
   if (u.kind === 'post' && u.published_date && u.stage === 'опубликован') t.push(`<span class="tag">${icon('megaphone')}${dShort(u.published_date)}</span>`);
   if (u.cmtOpen) t.push(`<span class="tag cmt" title="Комментарии, которые Claude ещё не учёл">${icon('message-circle')}${u.cmtOpen}</span>`);
   return `<div class="tags">${t.join('')}</div>`;
+}
+/* карточка идёт по этапам 2–6: пост конвейера или взятая идея, по которой пост ещё не заведён */
+const inWork = u => { const l = laneOf(u); return !!l && l.n >= 2 && l.n <= TEXT_STEP; };
+/* дорожка этапов в карточке: пройденные — галочкой, текущий — с тем, чей ход */
+function pathHtml(u) {
+  const l = laneOf(u);
+  if (!l || !l.n) return '';
+  return `<ol class="path" aria-label="Этапы">${LANES.map(x => `<li class="${x.n < l.n ? 'done' : x.n === l.n ? 'cur ' + (l.who || '') : ''}">${x.n < l.n ? icon('check') : `<span class="pn">${x.n}</span>`}<span>${esc(x.name)}</span>${x.n === l.n && l.who ? `<span class="pw">${whoName(l)}</span>` : ''}</li>`).join('')}</ol>`;
 }
 function cardHtml(u) {
   return `<article class="card" data-open="${esc(u.path)}">
@@ -804,7 +819,7 @@ function formStep(d) {
 }
 /* блок в карточке поста: 2–3 варианта формы от Claude большими плитками + выбор из библиотеки */
 function formBlockHtml(u) {
-  const live = u.kind === 'post' && !u.archived && u.stage !== 'опубликован' && !(u.step && u.step < 3);
+  const live = u.kind === 'post' && !u.archived && u.stage !== 'опубликован';
   if (!u.form_options.length && !u.format_pick && !live) return '';
   if (!S.forms && !S.formsErr) loadForms();
   const ids = [...u.form_options];
@@ -819,7 +834,7 @@ function formBlockHtml(u) {
       <button class="dbtn${on ? ' yes' : ''}" data-setform="${on ? '' : id}">${on ? icon('check') + 'Выбрана' : 'Эту'}</button>
     </div>`;
   };
-  return `<div class="fblock"><p class="section-l">Форма картинки · этап 3</p>
+  return `<div class="fblock"><p class="section-l">Форма картинки · этап ${FORM_STEP}</p>
     ${ids.length ? `<div class="fopts">${ids.map(tile).join('')}</div>` : '<p class="hint">Вариантов от Claude пока нет. Можно выбрать самому.</p>'}
     <div class="inline"><button class="btn" data-openlib="${esc(u.path)}">${icon('shapes')}Выбрать из библиотеки</button>${u.format_pick ? '<span class="hint">Нажми на выбранную ещё раз, чтобы снять выбор</span>' : ''}</div>
   </div>`;
@@ -834,12 +849,12 @@ function laneOf(u) {
     if (u.status === 'отложена') return { n: 1, who: 'park' };
     return { n: 1, who: u.cmtOpen ? 'claude' : 'me' };
   }
-  if (u.stage === 'опубликован') return { n: 8, who: null };
-  if (u.step === 7) return { n: 7, who: 'me' }; // текст пишет Дмитрий
+  if (u.stage === 'опубликован') return { n: OUT_LANE, who: null };
+  if (u.step === TEXT_STEP) return { n: TEXT_STEP, who: 'me' }; // текст пишет Дмитрий
   if (u.step) return { n: u.step, who: postWaits(u) ? 'me' : 'claude' };
   return { n: 0, who: null };
 }
-const laneSort = n => (n === 8
+const laneSort = n => (n === OUT_LANE
   ? (a, b) => String(b.published_date || '').localeCompare(String(a.published_date || '')) || (a.id < b.id ? 1 : -1)
   : (a, b) => String(a.plan_date || '9999').localeCompare(String(b.plan_date || '9999')) || (a.id < b.id ? -1 : 1));
 /* раскладка по этапам: { n: { all: [...], me: [...], claude: [...], park: [...] } } */
@@ -863,7 +878,7 @@ function renderBoard() {
   const strip = lanes.map(l => {
     const x = m[l.n];
     return `<button class="ls${x.all.length ? '' : ' zero'}" data-lane="${l.n}" title="${esc(`${l.name}: ${x.all.length}${x.me.length ? ` · ждут тебя ${x.me.length}` : ''}${x.claude.length ? ` · у Claude ${x.claude.length}` : ''}`)}">
-      ${l.n ? `<span class="ls-n">${l.n}</span>` : ''}${esc(l.name)}<b>${x.all.length}</b>${x.me.length && l.n < 8 ? `<span class="ls-me">${x.me.length}</span>` : ''}</button>`;
+      ${l.n ? `<span class="ls-n">${l.n}</span>` : ''}${esc(l.name)}<b>${x.all.length}</b>${x.me.length && l.n < TEXT_STEP ? `<span class="ls-me">${x.me.length}</span>` : ''}</button>`;
   }).join(`<span class="ls-arr">${icon('chevron-right')}</span>`);
   const minis = (items, key, note) => {
     const lim = S.expand[key] ? items.length : LIMIT;
@@ -875,14 +890,14 @@ function renderBoard() {
     let body;
     if (!c.items.length) body = '<p class="lempty">пусто</p>';
     else if (c.n === 'out') body = minis(c.items, 'lane:out', outNote);
-    else if (c.n === 8 || c.n === 0) body = minis(c.items.sort(laneSort(c.n)), `lane:${c.n}`);
+    else if (c.n === OUT_LANE || c.n === 0) body = minis(c.items.sort(laneSort(c.n)), `lane:${c.n}`);
     else {
       body = ['me', 'claude', 'park'].filter(w => m[c.n][w].length).map(w => {
         const items = m[c.n][w].sort(laneSort(c.n));
-        return `<div class="lgroup ${w}">${c.n === 7 && w === 'me' ? 'Пишешь ты' : WHO[w]}<span class="n">${items.length}</span></div>${minis(items, `lane:${c.n}:${w}`)}`;
+        return `<div class="lgroup ${w}">${c.n === TEXT_STEP && w === 'me' ? 'Пишешь ты' : WHO[w]}<span class="n">${items.length}</span></div>${minis(items, `lane:${c.n}:${w}`)}`;
       }).join('');
     }
-    const me = c.n >= 1 && c.n <= 6 ? m[c.n].me.length : 0;
+    const me = c.n >= 1 && c.n < TEXT_STEP ? m[c.n].me.length : 0;
     return `<section class="col lane${c.items.length ? '' : ' empty'}" id="lane-${c.n}">
       <div class="colhead">${icon(c.icon)}<span>${typeof c.n === 'number' && c.n ? c.n + ' · ' : ''}${esc(c.name)}</span><span class="n">${c.items.length}</span></div>
       ${me ? `<button class="btn walk" data-walk="${c.n}">${icon('play')}Пройти ${me}</button>` : ''}
@@ -1100,15 +1115,15 @@ function renderStats() {
   const m = laneMap(S.units.filter(pass));
   const dropped = {};
   S.units.filter(u => passIn(u, true) && (u.kind === 'post' || u.batch)).forEach(u => { const s = dropStep(u); if (s) dropped[s] = (dropped[s] || 0) + 1; });
-  const sum = w => LANES.filter(l => l.n <= 6).reduce((a, l) => a + m[l.n][w].length, 0);
+  const sum = w => LANES.filter(l => l.n < TEXT_STEP).reduce((a, l) => a + m[l.n][w].length, 0);
   const kpis = [
     ['На отборе', m[1].all.length, 'идеи'], ['Ждут тебя', sum('me'), 'решить в пульте'], ['У Claude', sum('claude'), 'делаю я'],
-    ['Пишешь текст', m[7].all.length, 'этап 7'], ['Вышло за 30 дней', pub30.length, 'по дате публикации'], ['В плане на 2 недели', plan14.length, 'с датой в шапке'],
+    ['Пишешь текст', m[TEXT_STEP].all.length, `этап ${TEXT_STEP}`], ['Вышло за 30 дней', pub30.length, 'по дате публикации'], ['В плане на 2 недели', plan14.length, 'с датой в шапке'],
   ];
   const funnel = LANES.map(l => {
     const x = m[l.n];
-    const v = l.n === 8 ? x.all.filter(u => u.step).length : x.all.length;
-    const bits = [x.me.length && l.n < 8 ? `${l.n === 7 ? 'пишешь ты' : 'ждут тебя'} ${x.me.length}` : '', x.claude.length ? `у Claude ${x.claude.length}` : '', dropped[l.n] ? `отсеяно ${dropped[l.n]}` : ''].filter(Boolean);
+    const v = l.n === OUT_LANE ? x.all.filter(u => u.step).length : x.all.length;
+    const bits = [x.me.length && l.n < OUT_LANE ? `${l.n === TEXT_STEP ? 'пишешь ты' : 'ждут тебя'} ${x.me.length}` : '', x.claude.length ? `у Claude ${x.claude.length}` : '', dropped[l.n] ? `отсеяно ${dropped[l.n]}` : ''].filter(Boolean);
     return { name: `${l.n} ${l.name}`, v, me: x.me.length, claude: x.claude.length, out: dropped[l.n] || 0, label: `<b>${v}</b>`, note: bits.join(' · '), tip: `${l.name}: ${v}${bits.length ? '<br>' + bits.join('<br>') : ''}` };
   });
   const w0 = addDays(mondayOf(today), -7 * 25);
@@ -1228,8 +1243,8 @@ function openDrawer(key) { const fresh = S.drawer !== key; S.drawer = key; if (f
 /* ---------- отбор идей: три кнопки и сразу следующая карточка (конвейер 2.0, 21.10.2026) ---------- */
 const DECIDE_OFF = ['стала постом', 'архив'];
 const undecided = u => u.kind === 'idea' && u.status === 'новая' && !u.cmtOpen && !u.archived;
-/* пост ждёт решения Дмитрия: этап 2–6, ход его, нет комментария, который Claude ещё не учёл (✏️ = ход Claude) */
-const postWaits = u => u.kind === 'post' && u.step >= 2 && u.step <= 6 && !u.archived && u.turn === 'дмитрий' && !u.cmtOpen;
+/* пост ждёт решения Дмитрия: этап 2–5, ход его, нет комментария, который Claude ещё не учёл (✏️ = ход Claude) */
+const postWaits = u => u.kind === 'post' && u.step >= 2 && u.step < TEXT_STEP && !u.archived && u.turn === 'дмитрий' && !u.cmtOpen;
 const waitsMe = u => undecided(u) || postWaits(u);
 const canDecide = u => (u.kind === 'idea' ? !DECIDE_OFF.includes(u.status) : postWaits(u));
 function openNext(path) {
@@ -1246,7 +1261,7 @@ function openNext(path) {
 }
 function decidePost(u, how) {
   if (how === 'yes') {
-    if (u.step === 3 && !u.format_pick) { toast('Сначала выбери форму: «Эту» под плиткой или из библиотеки', { kind: 'warn' }); $('.fblock')?.scrollIntoView({ behavior: 'smooth' }); return; }
+    if (u.step === FORM_STEP && !u.format_pick) { toast('Сначала выбери форму: «Эту» под плиткой или из библиотеки', { kind: 'warn' }); $('.fblock')?.scrollIntoView({ behavior: 'smooth' }); return; }
     openNext(u.path);
     save(u, { stage: stepVal(u.step + 1), turn: 'claude' }, { label: `${u.id}: берём, дальше «${STEPS[u.step + 1]}». Записано ${Store.label}` });
     return;
@@ -1261,11 +1276,14 @@ function decide(u, status) {
 }
 function decideHtml(u) {
   if (u.kind === 'post') return postDecideHtml(u);
-  if (DECIDE_OFF.includes(u.status)) return '';
-  const now = u.status === 'в работе' ? 'Решение: берём' : u.status === 'отклонена' ? 'Решение: не подходит'
-    : u.cmtOpen ? 'На доработке: комментарий ждёт Claude' : '';
+  if (DECIDE_OFF.includes(u.status) || becamePost(u)) return '';
+  // взята: кнопок нет — ход Claude, Дмитрию ничего делать не нужно (22.10.2026)
+  if (u.status === 'в работе') return `<div class="decide"><div class="dnow">Берём. Дальше Claude заводит пост и ${DOING[FORM_STEP]}. От тебя ничего: когда будет готово, пост появится в «Ждут тебя». ${RUN}</div>
+    <button class="btn ghost dundo" data-retake>${icon('undo-2')}Передумал — вернуть на отбор</button></div>`;
+  const now = u.status === 'отклонена' ? 'Решение: не подходит · можно поменять'
+    : u.cmtOpen ? 'На доработке: комментарий ждёт Claude · можно поменять' : `✓ — Claude заведёт пост: ${DOING[FORM_STEP].replace('пишет', 'распишет')}`;
   return `<div class="decide" id="decide">
-    ${now ? `<div class="dnow">${esc(now)} · можно поменять</div>` : ''}
+    <div class="dnow">${esc(now)}</div>
     <div class="dbtns" id="d-btns">
       <button class="dbtn no" data-decide="отклонена" aria-pressed="${u.status === 'отклонена'}">${icon('x')}Нафиг</button>
       <button class="dbtn fix" data-decide="fix" aria-pressed="${u.status === 'новая' && u.cmtOpen > 0}">${icon('pencil')}Доработать</button>
@@ -1278,14 +1296,16 @@ function decideHtml(u) {
   </div>`;
 }
 function postDecideHtml(u) {
-  if (!u.step || u.archived) return '';
+  if (!u.step || u.archived || u.stage === 'опубликован') return '';
   if (!postWaits(u)) {
-    const why = u.cmtOpen ? 'На доработке: комментарий ждёт Claude' : u.step === 7 ? 'Этап «Текст» твой: пишешь и выкладываешь сам' : `Ход Claude: готовит «${STEPS[u.step]}»`;
-    return `<div class="decide"><div class="dnow">${u.step} · ${STEPS[u.step]} · ${esc(why)}</div></div>`;
+    const why = u.cmtOpen ? `На доработке: Claude переделывает по твоему комментарию. ${RUN}`
+      : u.step === TEXT_STEP ? 'Этап «Текст» твой: пишешь по фактуре и выкладываешь. Вышло — пришли Claude тексты, как вышли.'
+        : `Ход Claude: ${DOING[u.step]}. От тебя ничего: когда будет готово, пост появится в «Ждут тебя». ${RUN}`;
+    return `<div class="decide"><div class="dnow">${esc(why)}</div></div>`;
   }
-  const yes = u.step === 3 ? (u.format_pick ? `Берём ${u.format_pick}` : 'Берём') : 'Берём';
+  const yes = u.step === FORM_STEP && u.format_pick ? `Берём ${u.format_pick}` : 'Берём';
   return `<div class="decide" id="decide">
-    <div class="dnow">Этап ${u.step} · ${STEPS[u.step]} · ждёт тебя${u.step === 3 && !u.format_pick ? ' · сначала выбери форму' : ''}</div>
+    <div class="dnow">${esc(ASK[u.step])}${u.step === FORM_STEP && !u.format_pick ? ' · форма ещё не выбрана' : ''}. После ✓ — ${esc(AFTER_YES[u.step])}.</div>
     <div class="dbtns" id="d-btns">
       <button class="dbtn no" data-decide="no">${icon('x')}Нафиг</button>
       <button class="dbtn fix" data-decide="fix">${icon('pencil')}Доработать</button>
@@ -1333,8 +1353,9 @@ function renderDrawer(fresh = false) {
       <button class="iconbtn" data-close aria-label="Закрыть">${icon('x')}</button></div>
       <h2>${esc(u.title)}</h2></div>
     <div class="dbody">
-      ${u.kind === 'post' && (!u.step || u.step === 3) ? formBlockHtml(u) : ''}
-      ${lead ? `<div class="md">${mdToHtml(stripComments(u.body).replace(/^\s*# .*\n/, ''))}</div>${u.kind === 'idea' || u.step > 3 ? formBlockHtml(u) : ''}${commentsHtml(u, !canDecide(u))}<details class="more"><summary>Статус, пиллар, файл</summary>` : ''}
+      ${pathHtml(u)}
+      ${u.kind === 'post' && !u.step ? formBlockHtml(u) : ''}
+      ${lead ? `<div class="md">${mdToHtml(stripComments(u.body).replace(/^\s*# .*\n/, ''))}</div>${u.kind === 'idea' || u.step ? formBlockHtml(u) : ''}${commentsHtml(u, !canDecide(u))}<details class="more"><summary>Статус, пиллар, файл</summary>` : ''}
       <div class="fields">
         <span class="k">Статус</span><select class="sel" id="d-status">${statuses.map(s => `<option ${s === u.status ? 'selected' : ''}>${esc(s)}</option>`).join('')}${statuses.includes(u.status) ? '' : `<option selected disabled>${esc(u.status)}</option>`}</select>
         <span class="k">Пиллар</span><div class="inline"><select class="sel" id="d-pillar"><option value="">— не задан</option>${PILLARS.map(p => `<option value="${p.code}" ${u.pillar === p.code ? 'selected' : ''}>${esc(pName(p))}</option>`).join('')}</select>${u.pillar_inherited ? '<span class="faint">взят из тезиса, в файле пусто</span>' : ''}</div>
@@ -1362,6 +1383,8 @@ function renderDrawer(fresh = false) {
     ta.onkeydown = e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); sendComment(u); } };
     $('#d-cmt-send').onclick = () => sendComment(u);
   }
+  const rt = $('[data-retake]');
+  if (rt) rt.onclick = () => save(u, { status: 'новая' }, { label: `${u.id}: вернул на отбор. Записано ${Store.label}` });
   const box = $('#d-fix-box');
   if (box) {
     const fix = $('#d-fix');
