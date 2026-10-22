@@ -62,6 +62,7 @@ const ASK = { 2: 'Прочитай детали, выбери форму и на
 const AFTER_YES = { 2: 'Claude соберёт прототип', 3: 'Claude соберёт картинку в Figma', 4: 'Claude напишет фактуру и сделает EN-копию', 5: 'текст пишешь ты: RU, потом EN' };
 const RUN = 'Claude двигает карточки по команде «двигай конвейер».';
 const PREF_KEY = 'pult:prefs:v2';
+const MARKS_KEY = 'pult:marks:v1'; // неотправленные замечания к месту в тексте — только в этом браузере
 const TOKEN_KEY = 'pult:gh-token';
 
 const S = {
@@ -72,6 +73,7 @@ const S = {
   lastLoad: 0, loaded: false, loading: false,
   forms: null, formBy: {}, formsErr: null, formsLoading: false, ff: { fam: 'all', tier: 'all' },
   pick: null, pickVia: null, pickFrom: null, // выбор формы для поста: путь поста, откуда пришли, с какого экрана
+  marks: (() => { try { return JSON.parse(localStorage.getItem(MARKS_KEY) || '{}') || {}; } catch (e) { return {}; } })(), sel: null,
 };
 
 /* ---------- настройки вида: только удобство, правда — в файлах ---------- */
@@ -230,6 +232,8 @@ function parseComments(body) {
     if (/^- ↳/.test(s)) c.replies.push(s.replace(/^- ↳\s*/, ''));
     else c.more.push(s);
   }
+  // замечание к месту: «📍 «цитата»», что не так — строками ниже
+  for (const c of out) { const q = c.text.match(/^📍 «(.*)»$/); if (q) { c.quote = q[1]; c.note = c.more.join('\n'); } }
   return out;
 }
 function stripComments(body) {
@@ -1228,10 +1232,127 @@ function fillImages(root) {
     } catch (e) { /* картинка не загрузилась — остаётся подпись */ }
   });
 }
+/* ---------- замечания к месту в тексте: выделил кусок → «Замечание» → место подсвечено с номером (Дмитрий 22.10.2026) ----------
+   Копятся в браузере и уходят Claude одной записью: «Доработать» или вместе с решением. В файле — обычный комментарий «📍 «цитата»». */
+const marksOf = u => S.marks[u.path] || [];
+function saveMarks() { try { localStorage.setItem(MARKS_KEY, JSON.stringify(S.marks)); } catch (e) { /* нет хранилища: живут до перезагрузки */ } }
+/* открытые замечания карточки по порядку: сначала отправленные (ждут Claude), потом неотправленные; n — номер на подсветке */
+function openMarks(u) {
+  const sent = u.comments.filter(c => !c.done && c.quote).map(c => ({ q: c.quote, note: c.note, sent: true }));
+  return [...sent, ...marksOf(u).map((m, i) => ({ q: m.q, note: m.note, sent: false, i }))].map((m, k) => ({ ...m, n: k + 1 }));
+}
+const markEntry = m => `📍 «${m.q}»${m.note ? '\n' + m.note : ''}`;
+const cut = (s, n) => (s.length > n ? s.slice(0, n).trim() + '…' : s);
+function marksListHtml(u) {
+  const ms = openMarks(u).filter(m => !m.sent);
+  return ms.length ? `<ol class="mlist">${ms.map(m => `<li><span class="mn">${m.n}</span><span class="mt">«${esc(cut(m.q, 90))}»${m.note ? ` — ${esc(m.note)}` : ''}</span><button class="iconbtn" data-unmark="${m.i}" aria-label="Убрать замечание">${icon('x')}</button></li>`).join('')}</ol>` : '';
+}
+/* карточка без кнопок решения (ход Claude, вне конвейера): отдельная кнопка отправки */
+function marksBarHtml(u) {
+  if (canDecide(u) || !marksOf(u).length) return '';
+  return `<div class="decide"><div class="dnow">Не отправлены Claude: ${marksOf(u).length}</div>${marksListHtml(u)}<button class="dbtn yes" data-sendmarks>${icon('send')}Отправить замечания</button></div>`;
+}
+/* подсветка: ищем цитату по тексту карточки без учёта пробелов (выделение через ячейки таблицы даёт табы и переводы строк) */
+function markText(roots, m) {
+  const want = m.q.replace(/…$/, '').replace(/\s+/g, '');
+  if (want.length < 2) return null;
+  for (const root of roots) {
+    let s = '';
+    const at = [];
+    const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    for (let n; (n = w.nextNode());) {
+      if (n.parentElement.closest('.cmn')) continue;
+      for (let i = 0; i < n.data.length; i++) if (!/\s/.test(n.data[i])) { s += n.data[i]; at.push([n, i]); }
+    }
+    const k = s.indexOf(want);
+    if (k < 0) continue;
+    const spans = new Map();
+    for (let j = k; j < k + want.length; j++) { const [n, i] = at[j]; const r = spans.get(n); spans.set(n, r ? [r[0], i] : [i, i]); }
+    let first = null, last = null;
+    for (const [n, [a, b]] of spans) {
+      const r = document.createRange();
+      r.setStart(n, a); r.setEnd(n, b + 1);
+      const el = document.createElement('mark');
+      el.className = 'cm' + (m.sent ? '' : ' draft');
+      el.dataset.mk = m.n;
+      el.title = m.note || 'Вопрос к этому месту';
+      r.surroundContents(el);
+      first = first || el; last = el;
+    }
+    last.insertAdjacentHTML('afterend', `<sup class="cmn${m.sent ? '' : ' draft'}" data-mk="${m.n}">${m.n}</sup>`);
+    return first;
+  }
+  return null;
+}
+function paintMarks(u) {
+  const roots = $$('.drawer .dbody .md');
+  for (const m of openMarks(u)) {
+    const el = markText(roots, m);
+    const d = el && el.closest('details');
+    if (d) d.open = true; // замечание в свёрнутом блоке — блок раскрыт, чтобы его было видно
+  }
+}
+/* выделение в тексте карточки → плавающая кнопка «Замечание» под ним */
+function selMark() {
+  const btn = $('#markbtn');
+  if (!btn) return;
+  const hide = () => { btn.hidden = true; S.sel = null; };
+  const sel = getSelection();
+  if (!S.by[S.drawer] || !sel || sel.isCollapsed || !sel.rangeCount) return hide();
+  const r = sel.getRangeAt(0);
+  const el = n => (n.nodeType === 1 ? n : n.parentElement);
+  if (!el(r.startContainer)?.closest('.drawer .dbody .md') || !el(r.endContainer)?.closest('.drawer .dbody')) return hide();
+  const q = sel.toString().replace(/\s+/g, ' ').trim();
+  if (q.replace(/\s/g, '').length < 2) return hide();
+  S.sel = { path: S.drawer, q: cut(q, 400) };
+  const rc = r.getBoundingClientRect();
+  btn.hidden = false;
+  const w = btn.offsetWidth, h = btn.offsetHeight;
+  let y = rc.bottom + 10;
+  if (y + h > innerHeight - 96) y = Math.max(8, rc.top - h - 10);
+  btn.style.left = Math.min(Math.max(8, rc.left + rc.width / 2 - w / 2), innerWidth - w - 8) + 'px';
+  btn.style.top = y + 'px';
+}
+function openMarkBox(u, q) {
+  $('#d-mark')?.remove();
+  const dec = $$('.drawer .decide');
+  dec.forEach(d => { d.hidden = true; });
+  $('.drawer').insertAdjacentHTML('beforeend', `<div class="decide dmark" id="d-mark">
+    <div class="mq">«${esc(cut(q, 180))}»</div>
+    <textarea id="d-mark-t" rows="2" placeholder="Что не так с этим местом? Можно пусто — тогда это просто вопрос к месту"></textarea>
+    <div class="dbtns two"><button class="dbtn" id="d-mark-cancel">Отмена</button><button class="dbtn yes" id="d-mark-add">${icon('message-square-plus')}Добавить</button></div>
+  </div>`);
+  icons();
+  const ta = $('#d-mark-t');
+  ta.focus();
+  const close = () => { $('#d-mark')?.remove(); dec.forEach(d => { d.hidden = false; }); };
+  const add = () => {
+    (S.marks[u.path] = S.marks[u.path] || []).push({ q, note: ta.value.trim() });
+    saveMarks();
+    close();
+    renderDrawer();
+    toast(`Замечание ${openMarks(S.by[u.path]).length} отмечено. Уйдёт Claude с «Доработать» или вместе с решением`);
+  };
+  $('#d-mark-cancel').onclick = close;
+  $('#d-mark-add').onclick = add;
+  ta.onkeydown = e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); add(); } if (e.key === 'Escape') close(); };
+}
+document.body.insertAdjacentHTML('beforeend', `<button class="markbtn" id="markbtn" hidden>${icon('message-square-plus')}Замечание</button>`);
+$('#markbtn').addEventListener('pointerdown', e => e.preventDefault()); // клик не снимает выделение
+$('#markbtn').addEventListener('click', () => {
+  const s = S.sel;
+  $('#markbtn').hidden = true;
+  getSelection().removeAllRanges();
+  if (s && S.by[s.path] && S.drawer === s.path) openMarkBox(S.by[s.path], s.q);
+});
+document.addEventListener('selectionchange', () => { clearTimeout(S.selT); S.selT = setTimeout(selMark, 150); });
+
 function commentsHtml(u, withInput = true) {
+  const num = new Map(openMarks(u).filter(m => m.sent).map(m => [m.q, m.n]));
   const list = u.comments.map(c => `<div class="cmt ${c.done ? 'done' : ''}">
       <div class="cmeta">${c.done ? `${icon('check-check')}учтено` : `${icon('clock')}ждёт Claude`}<span>${dShort(c.date)}${c.time ? ' ' + c.time : ''}</span></div>
-      <div class="ctext">${esc([c.text, ...c.more].join('\n'))}</div>
+      ${c.quote ? `<div class="cquote">${!c.done && num.has(c.quote) ? `<span class="mn">${num.get(c.quote)}</span>` : ''}«${esc(cut(c.quote, 160))}»</div><div class="ctext">${esc(c.note || 'Вопрос к этому месту')}</div>`
+        : `<div class="ctext">${esc([c.text, ...c.more].join('\n'))}</div>`}
       ${c.replies.map(r => `<div class="creply">${icon('corner-down-right')}${esc(r)}</div>`).join('')}
     </div>`).join('');
   if (!withInput) return list ? `<div class="cmts"><p class="section-l">Комментарии для Claude</p>${list}</div>` : '';
@@ -1243,30 +1364,42 @@ function commentsHtml(u, withInput = true) {
   </div>`;
 }
 function stampNow() { const d = new Date(); return `${isoOf(d)} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; }
+/* комментарий и неотправленные замечания карточки — одной записью в файл */
 function sendComment(u0, val0) {
   const val = (val0 ?? ($('#d-cmt')?.value || '')).trim();
-  if (!val) return;
   const path = u0.path;
+  const marks = [...marksOf(u0)];
+  const items = [...marks.map(markEntry), ...(val ? [val] : [])];
+  if (!items.length) return;
   enqueue(path, async () => {
     const u = S.by[path];
     const prev = u.text;
-    const { text, entry } = addComment(u.text, val, stampNow());
+    const stamp = stampNow(), entries = [];
+    let text = u.text;
+    for (const it of items) { const r = addComment(text, it, stamp); text = r.text; entries.push(r.entry); }
+    const what = marks.length ? `замечаний: ${marks.length}${val ? ' и комментарий' : ''}` : 'комментарий';
     let ver;
-    try { ver = await Store.write(u, text, `пульт: ${u.id} комментарий для Claude`); }
+    try { ver = await Store.write(u, text, `пульт: ${u.id} ${marks.length ? `замечания к тексту (${marks.length})` : 'комментарий для Claude'}`); }
     catch (e) {
-      if (e instanceof Conflict) { replaceFile(e.file); render(); toast('Файл поменяли в другом месте. Показываю свежую версию — отправь ещё раз, текст сохранён.', { kind: 'warn' }); return; }
+      if (e instanceof Conflict) { replaceFile(e.file); render(); toast('Файл поменяли в другом месте. Показываю свежую версию — отправь ещё раз, текст и замечания сохранены.', { kind: 'warn' }); return; }
       toast(MODE === 'gh' ? `GitHub не принял комментарий: ${e.message}` : 'Пульт не отвечает. Окно терминала с пультом открыто?', { kind: 'err' });
       return;
     }
     delete S.drafts[path];
+    if (marks.length) { delete S.marks[path]; saveMarks(); }
     replaceFile({ path, text, ver });
     render();
-    toast(`${u.id}: комментарий записан ${Store.label}`, { undo: () => enqueue(path, async () => {
+    toast(`${u.id}: ${what} — записано ${Store.label}`, { undo: () => enqueue(path, async () => {
       const cur = S.by[path];
-      // файл с тех пор не меняли — вернуть как было; меняли — убрать только эту запись
-      const back = cur.text === text ? prev : cur.text.replace('\n' + entry, '');
-      try { const v = await Store.write(cur, back, `пульт: ${cur.id} комментарий отменён`); replaceFile({ path, text: back, ver: v }); S.drafts[path] = val; render(); toast('Комментарий отменён'); }
-      catch (e) { toast('Не вышло отменить — удали комментарий в Обсидиане', { kind: 'err' }); }
+      // файл с тех пор не меняли — вернуть как было; меняли — убрать только эти записи
+      const back = cur.text === text ? prev : entries.reduce((t, en) => t.replace('\n' + en, ''), cur.text);
+      try {
+        const v = await Store.write(cur, back, `пульт: ${cur.id} комментарий отменён`);
+        replaceFile({ path, text: back, ver: v });
+        S.drafts[path] = val;
+        if (marks.length) { S.marks[path] = marks; saveMarks(); }
+        render(); toast('Отменено: замечания снова не отправлены');
+      } catch (e) { toast('Не вышло отменить — удали комментарий в Обсидиане', { kind: 'err' }); }
     }) });
   });
 }
@@ -1318,11 +1451,12 @@ function decideHtml(u) {
     <div class="dnow">${esc(now)}</div>
     <div class="dbtns" id="d-btns">
       <button class="dbtn no" data-decide="отклонена" aria-pressed="${u.status === 'отклонена'}">${icon('x')}Нафиг</button>
-      <button class="dbtn fix" data-decide="fix" aria-pressed="${u.status === 'новая' && u.cmtOpen > 0}">${icon('pencil')}Доработать</button>
+      <button class="dbtn fix" data-decide="fix" aria-pressed="${u.status === 'новая' && u.cmtOpen > 0}">${icon('pencil')}Доработать${marksOf(u).length ? ` · ${marksOf(u).length}` : ''}</button>
       <button class="dbtn yes" data-decide="в работе" aria-pressed="${u.status === 'в работе'}">${icon('check')}Берём</button>
     </div>
     <div class="dfix" id="d-fix-box" hidden>
-      <textarea id="d-fix" rows="3" placeholder="Как доработать: уже, другой исходник, соединить с другой идеей…"></textarea>
+      ${marksListHtml(u)}
+      <textarea id="d-fix" rows="3" placeholder="${marksOf(u).length ? 'Общий комментарий — по желанию' : 'Как доработать: уже, другой исходник, соединить с другой идеей…'}"></textarea>
       <div class="dbtns two"><button class="dbtn" id="d-fix-cancel">Отмена</button><button class="dbtn yes" id="d-fix-send">${icon('send')}Отправить</button></div>
     </div>
   </div>`;
@@ -1340,11 +1474,12 @@ function postDecideHtml(u) {
     <div class="dnow">${esc(ASK[u.step])}${u.step === FORM_STEP && !u.format_pick ? ' · форма ещё не выбрана' : ''}. После ✓ — ${esc(AFTER_YES[u.step])}.</div>
     <div class="dbtns" id="d-btns">
       <button class="dbtn no" data-decide="no">${icon('x')}Нафиг</button>
-      <button class="dbtn fix" data-decide="fix">${icon('pencil')}Доработать</button>
+      <button class="dbtn fix" data-decide="fix">${icon('pencil')}Доработать${marksOf(u).length ? ` · ${marksOf(u).length}` : ''}</button>
       <button class="dbtn yes" data-decide="yes">${icon('check')}${esc(yes)}</button>
     </div>
     <div class="dfix" id="d-fix-box" hidden>
-      <textarea id="d-fix" rows="3" placeholder="Что поправить на этом этапе: другой пример, убрать пункт, сменить угол…"></textarea>
+      ${marksListHtml(u)}
+      <textarea id="d-fix" rows="3" placeholder="${marksOf(u).length ? 'Общий комментарий — по желанию' : 'Что поправить на этом этапе: другой пример, убрать пункт, сменить угол…'}"></textarea>
       <div class="dbtns two"><button class="dbtn" id="d-fix-cancel">Отмена</button><button class="dbtn yes" id="d-fix-send">${icon('send')}Отправить</button></div>
     </div>
   </div>`;
@@ -1354,7 +1489,7 @@ function renderDrawer(fresh = false) {
   const u = S.by[S.drawer];
   if (!u) { closeDrawer(); return; }
   // файл не менялся — не перерисовывать: запись соседней карточки не должна сбивать ввод в этой
-  const sig = u.text + (S.forms ? '|f' : '');
+  const sig = u.text + (S.forms ? '|f' : '') + '|' + JSON.stringify(marksOf(u));
   if (!fresh && $('.drawer') && S.drawn === sig) return;
   S.drawn = sig;
   const prevScroll = fresh ? 0 : ($('.dbody')?.scrollTop || 0);
@@ -1397,10 +1532,11 @@ function renderDrawer(fresh = false) {
       ${lead ? '</details>' : `${commentsHtml(u)}
       <div><p class="section-l">Текст файла</p><div class="md">${mdToHtml(stripComments(u.body))}</div></div>`}
     </div>
-    ${decideHtml(u)}
+    ${decideHtml(u)}${marksBarHtml(u)}
   </aside>`;
   icons();
   fillImages($('#drawer-root'));
+  paintMarks(u);
   const db = $('.dbody');
   if (db) db.scrollTop = prevScroll;
   $('#d-status').onchange = e => save(u, { status: e.target.value }, { label: `${u.id}: статус «${e.target.value}». Записано ${Store.label}` });
@@ -1420,9 +1556,15 @@ function renderDrawer(fresh = false) {
   const box = $('#d-fix-box');
   if (box) {
     const fix = $('#d-fix');
-    const send = () => { const v = fix.value.trim(); if (!v) { fix.focus(); return; } S.drafts[u.path] = v; S.fixOpen = null; sendComment(u, v); openNext(u.path); };
+    const send = () => { const v = fix.value.trim(); if (!v && !marksOf(u).length) { fix.focus(); return; } S.drafts[u.path] = v; S.fixOpen = null; sendComment(u, v); openNext(u.path); };
     $$('#d-btns [data-decide]').forEach(b => { b.onclick = () => {
-      if (b.dataset.decide !== 'fix') { if (u.kind === 'post') decidePost(u, b.dataset.decide); else decide(u, b.dataset.decide); return; }
+      if (b.dataset.decide !== 'fix') {
+        // неотправленные замечания уходят вместе с решением; «Берём» без формы — не решение, замечания ждут
+        const blocked = u.kind === 'post' && b.dataset.decide === 'yes' && u.step === FORM_STEP && !u.format_pick;
+        if (!blocked && marksOf(u).length) sendComment(u, '');
+        if (u.kind === 'post') decidePost(u, b.dataset.decide); else decide(u, b.dataset.decide);
+        return;
+      }
       S.fixOpen = u.path; $('#d-btns').hidden = true; box.hidden = false; fix.value = S.drafts[u.path] || ''; fix.focus();
     }; });
     if (S.fixOpen === u.path) { $('#d-btns').hidden = true; box.hidden = false; fix.value = S.drafts[u.path] || ''; }
@@ -1549,6 +1691,12 @@ document.addEventListener('click', e => {
     if (u.format_pick !== pf.dataset.pickform) save(u, { format_pick: pf.dataset.pickform }, { label: `${u.id}: форма ${pf.dataset.pickform}. Записано ${Store.label}` });
     return;
   }
+  /* замечания к месту в тексте */
+  const um = t.closest('[data-unmark]');
+  if (um) { const u = S.by[S.drawer]; if (!u) return; marksOf(u).splice(Number(um.dataset.unmark), 1); if (!marksOf(u).length) delete S.marks[u.path]; saveMarks(); renderDrawer(); return; }
+  if (t.closest('[data-sendmarks]')) { const u = S.by[S.drawer]; if (u) sendComment(u, ''); return; }
+  const mk = t.closest('mark.cm, sup.cmn');
+  if (mk && !String(getSelection())) { const u = S.by[S.drawer]; const m = u && openMarks(u)[Number(mk.dataset.mk) - 1]; if (m) toast(`${m.n}. ${m.note || 'Вопрос к этому месту'}${m.sent ? ' · ждёт Claude' : ' · не отправлено'}`); return; }
   const sf = t.closest('[data-setform]');
   if (sf) {
     const u = S.by[S.drawer];
