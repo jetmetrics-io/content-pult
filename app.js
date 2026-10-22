@@ -817,6 +817,38 @@ function formStep(d) {
   if (i < 0 || !list.length) return;
   openDrawer('form:' + list[(i + d + list.length) % list.length].id);
 }
+/* текст поста конвейера по этапам: «## N · …» — этап, остальное (черновик до конвейера, «Как делали», статистика) — хвост.
+   Открыт только текущий этап, под ним выбор формы; пройденные и хвост свёрнуты (Дмитрий 22.10: «стооолько текста в карточке») */
+function stageParts(body) {
+  const st = {}, rest = [];
+  let cur = null;
+  const empty = n => !st[n].slice(1).some(s => s.trim());
+  for (const s of body.split('\n')) {
+    const m = s.match(/^## ([2-6]) · /);
+    if (m) { cur = +m[1]; st[cur] = [s]; continue; }
+    if (typeof cur === 'number' && (/^## /.test(s) || (/^---\s*$/.test(s) && (cur === TEXT_STEP || empty(cur))))) cur = 'rest';
+    if (cur === null) { if (s.trim()) rest.push(s); continue; }
+    (cur === 'rest' ? rest : st[cur]).push(s);
+  }
+  return { st, rest };
+}
+const mdWords = lines => lines.join('\n').replace(/<!--[\s\S]*?-->/g, ' ').split('\n').filter(s => !/^#{1,6} |^---\s*$/.test(s)).join(' ').replace(/[|*_`>#:-]+/g, ' ').split(/\s+/).filter(Boolean).length;
+function stagedBodyHtml(u, body) {
+  const { st, rest } = stageParts(body);
+  if (!st[u.step]) return null; // файл не по этапам — показываем как есть
+  const fold = (cls, title, lines) => `<details class="stage ${cls}"><summary>${esc(title)}</summary><div class="md">${mdToHtml(lines.join('\n'))}</div></details>`;
+  const out = [];
+  for (const n of Object.keys(st).map(Number).sort((a, b) => a - b)) {
+    const body = st[n].slice(1), w = mdWords(body);
+    if (n === u.step) out.push(`<div class="md">${mdToHtml(st[n].join('\n'))}</div>`, formBlockHtml(u));
+    else if (w && n < u.step) out.push(fold('done', `${n} · ${STEPS[n]} · готово`, body));
+    else if (w) out.push(fold('later', `${n} · ${STEPS[n]} · заготовка`, body));
+  }
+  const rw = mdWords(rest);
+  if (rw) out.push(fold('rest', `Остальное в файле: черновик и служебное · ${rw.toLocaleString('ru-RU')} слов`, rest));
+  return out.join('');
+}
+
 /* блок в карточке поста: 2–3 варианта формы от Claude большими плитками + выбор из библиотеки */
 function formBlockHtml(u) {
   const live = u.kind === 'post' && !u.archived && u.stage !== 'опубликован';
@@ -1355,7 +1387,7 @@ function renderDrawer(fresh = false) {
     <div class="dbody">
       ${pathHtml(u)}
       ${u.kind === 'post' && !u.step ? formBlockHtml(u) : ''}
-      ${lead ? `<div class="md">${mdToHtml(stripComments(u.body).replace(/^\s*# .*\n/, ''))}</div>${u.kind === 'idea' || u.step ? formBlockHtml(u) : ''}${commentsHtml(u, !canDecide(u))}<details class="more"><summary>Статус, пиллар, файл</summary>` : ''}
+      ${lead ? `${(u.step && stagedBodyHtml(u, stripComments(u.body))) || `<div class="md">${mdToHtml(stripComments(u.body).replace(/^\s*# .*\n/, ''))}</div>${formBlockHtml(u)}`}${commentsHtml(u, !canDecide(u))}<details class="more"><summary>Статус, пиллар, файл</summary>` : ''}
       <div class="fields">
         <span class="k">Статус</span><select class="sel" id="d-status">${statuses.map(s => `<option ${s === u.status ? 'selected' : ''}>${esc(s)}</option>`).join('')}${statuses.includes(u.status) ? '' : `<option selected disabled>${esc(u.status)}</option>`}</select>
         <span class="k">Пиллар</span><div class="inline"><select class="sel" id="d-pillar"><option value="">— не задан</option>${PILLARS.map(p => `<option value="${p.code}" ${u.pillar === p.code ? 'selected' : ''}>${esc(pName(p))}</option>`).join('')}</select>${u.pillar_inherited ? '<span class="faint">взят из тезиса, в файле пусто</span>' : ''}</div>

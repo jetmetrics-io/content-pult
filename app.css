@@ -380,6 +380,11 @@ table.tbl { width: 100%; border-collapse: separate; border-spacing: 0; backgroun
 .dfix textarea:focus { box-shadow: var(--jm-ring); border-color: var(--jm-green); }
 details.more summary { cursor: pointer; font-size: 13px; color: var(--jm-muted); margin-bottom: 10px; }
 details.more[open] { display: grid; gap: 14px; }
+/* пост конвейера: пройденные этапы и хвост файла свёрнуты */
+details.stage { border: var(--jm-border); border-radius: var(--jm-r-md); background: var(--jm-surface); padding: 12px 14px; }
+details.stage summary { cursor: pointer; font-size: 14px; font-weight: 600; color: var(--jm-text); }
+details.stage.rest summary { font-weight: 500; color: var(--jm-muted); }
+details.stage[open] summary { margin-bottom: 12px; }
 /* телефон: верх в две строки, фильтры не липнут, в карточке без ссылки на Обсидиан */
 @media (max-width: 760px) {
   :root { --top-h: 100px; }
