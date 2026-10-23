@@ -29,7 +29,17 @@ const pShort = code => (code === 'Personal' || code === 'Promo' ? PMAP[code].nam
 const IDEA_STATUSES = ['новая', 'в работе', 'отложена', 'отклонена', 'стала постом', 'архив'];
 const POST_STATUSES = ['идея', 'в работе', 'черновик', 'готов', 'опубликован', 'парковка', 'архив'];
 const STAT_KEYS = ['li_impressions', 'li_reach', 'li_reactions', 'li_comments', 'li_saves', 'li_reposts', 'li_sends',
-  'li_profile_views', 'li_followers', 'tg_views', 'tg_reactions', 'tg_forwards', 'tg_comments', 'tg_clicks', 'tg_followers'];
+  'li_profile_views', 'li_followers', 'tg_views', 'tg_reactions', 'tg_forwards', 'tg_comments', 'tg_clicks', 'tg_followers',
+  'fb_views', 'fb_reactions', 'fb_comments', 'fb_shares', 'ss_views'];
+/* площадки (23.10.2026): в шапке published_<k>: true, своя дата — published_<k>_date, если площадка вышла не в день published_date.
+   short — как в reference/вышедшее.md; reach — поле охвата: у LinkedIn показы, у остальных просмотры, поэтому площадки по нему не сравнивают */
+const CH = [
+  { k: 'li', name: 'LinkedIn', short: 'LI', reach: 'li_impressions', stats: [['li_impressions', 'показы'], ['li_reactions', 'реакции'], ['li_comments', 'комм.'], ['li_reposts', 'репосты'], ['li_saves', 'сохр.']] },
+  { k: 'tg', name: 'Telegram', short: 'TG', reach: 'tg_views', stats: [['tg_views', 'просмотры'], ['tg_reactions', 'реакции'], ['tg_forwards', 'пересылки'], ['tg_comments', 'комм.']] },
+  { k: 'fb', name: 'Facebook', short: 'FB', reach: 'fb_views', stats: [['fb_views', 'просмотры'], ['fb_reactions', 'реакции'], ['fb_comments', 'комм.'], ['fb_shares', 'репосты']] },
+  { k: 'substack', name: 'Substack', short: 'SB', reach: 'ss_views', stats: [['ss_views', 'просмотры']] },
+];
+const chShort = u => CH.filter(c => u.published && u.published[c.k]).map(c => c.short).join(' ');
 const SRC = [['all', 'Все'], ['batch', 'Партии с 21.10'], ['cards', 'Карточки сент.–окт.'], ['old', 'Старый банк'], ['b0610', 'Банк 06.10'], ['posts', 'Посты']];
 // звёзды и дуэли сняты 21.10.2026 (конвейер 2.0): порядок только по номеру или свежести
 const SORTS = [['id', 'По номеру'], ['new', 'Сначала новые']];
@@ -300,8 +310,9 @@ function buildUnit(file) {
   u.cmtOpen = u.comments.filter(c => !c.done).length;
   if (kind === 'idea') u.post_ref = fields.post ? String(fields.post) : null;
   if (kind === 'post') {
-    u.published = Object.fromEntries(['li', 'tg', 'fb', 'substack'].map(k => [k, fields['published_' + k] === true]));
+    u.published = Object.fromEntries(CH.map(c => [c.k, fields['published_' + c.k] === true]));
     u.published_date = asDate(fields.published_date) || asDate(fields.published_en_date) || asDate(fields.published_ru_date) || (status === 'опубликован' ? u.date : null);
+    u.pubOn = Object.fromEntries(CH.filter(c => u.published[c.k]).map(c => [c.k, asDate(fields[`published_${c.k}_date`]) || u.published_date]));
     u.stats = {};
     for (const k of STAT_KEYS) { const n = asNum(fields[k]); if (n != null) u.stats[k] = n; }
     u.idea_ref = (String(fields.idea || '').match(/I-\d{3}/) || [null])[0];
@@ -521,7 +532,7 @@ function rawOf(u, k) {
   if (k === 'pillar') return u.pillar_inherited ? null : u.pillar;
   if (k === 'my_duels') return u.my_duels || null;
   // поля конвейера: в карточке под этими именами другое (stage — статус, archived — признак), прежнее значение — из файла
-  if (['stage', 'turn', 'was', 'was_stage', 'archived'].includes(k)) return FM.read(u.text).fields[k] ?? null;
+  if (['stage', 'turn', 'was', 'was_stage', 'archived', 'published_date'].includes(k) || k.startsWith('published_') || STAT_KEYS.includes(k)) return FM.read(u.text).fields[k] ?? null;
   return u[k] ?? null;
 }
 function validate(u, fields) {
@@ -537,6 +548,8 @@ function validate(u, fields) {
     if (k === 'turn' && !['claude', 'дмитрий'].includes(v)) throw new Error('ход — claude или дмитрий');
     if (k === 'my_score') { v = Number(v); if (!(v >= 1 && v <= 5)) throw new Error('оценка — от 1 до 5'); }
     if (k === 'my_elo' || k === 'my_duels') { v = Math.round(Number(v)); if (!(v >= 0)) throw new Error(`${k}: нужно число`); }
+    if (k === 'published_date' && !/^\d{4}-\d{2}-\d{2}$/.test(v)) throw new Error('дата должна быть ГГГГ-ММ-ДД');
+    if (STAT_KEYS.includes(k)) { v = asNum(v); if (!(v >= 0)) throw new Error('охват — целое число от 0'); v = Math.round(v); }
     out[k] = v;
   }
   return out;
@@ -545,8 +558,9 @@ function commitMessage(u, fields) {
   const parts = Object.entries(fields).map(([k, v]) => ({
     status: `статус → ${v}`, plan_date: v ? `в план на ${v}` : 'убран из плана', my_score: v ? `оценка ${v}` : 'оценка снята',
     pillar: `пиллар ${normPillar(v) || 'снят'}`, my_elo: 'дуэль', format_pick: v ? `форма ${v}` : 'форма снята',
-    stage: v ? `этап → ${v}` : null,
-  })[k]).filter(Boolean);
+    stage: v ? `этап → ${v}` : null, published_date: v ? `вышел ${v}` : 'дата выхода снята',
+  })[k] || (k.startsWith('published_') && CH.find(c => k === 'published_' + c.k) ? `${CH.find(c => k === 'published_' + c.k).name} ${v ? 'да' : 'нет'}` : null)
+    || (STAT_KEYS.includes(k) ? `${k} ${v ?? '—'}` : null)).filter(Boolean);
   return `пульт: ${u.id} ${parts.join(', ')}`;
 }
 
@@ -651,7 +665,7 @@ function tagsHtml(u) {
   if (u.fit === 'с оговоркой') t.push(`<span class="tag" title="Оговорка по стратегии — в карточке">⚠️ с оговоркой</span>`);
   if (u.kind === 'idea') t.push(`<span class="tag">${u.batch ? 'партия ' + dShort(u.batch) : esc(srcName(u))}</span>`);
   if (u.plan_date) t.push(`<span class="tag green">${icon('calendar-days')}${dShort(u.plan_date)}</span>`);
-  if (u.kind === 'post' && u.published_date && u.stage === 'опубликован') t.push(`<span class="tag">${icon('megaphone')}${dShort(u.published_date)}</span>`);
+  if (u.kind === 'post' && u.published_date && u.stage === 'опубликован') t.push(`<span class="tag" title="Когда и где вышел">${icon('megaphone')}${dShort(u.published_date)}${chShort(u) ? ' · ' + chShort(u) : ''}</span>`);
   if (u.cmtOpen) t.push(`<span class="tag cmt" title="Комментарии, которые Claude ещё не учёл">${icon('message-circle')}${u.cmtOpen}</span>`);
   return `<div class="tags">${t.join('')}</div>`;
 }
@@ -1175,6 +1189,18 @@ function renderStats() {
     ${weeks.map(w => `<div class="c ${w.items.length ? '' : 'zero'}" data-tip="${esc(`<b>${dShort(isoOf(w.ws))} — ${dShort(isoOf(w.we))}</b>: ${w.items.length}${w.items.length ? '<br>' + w.items.map(u => esc(u.id + ' ' + u.title.slice(0, 48))).join('<br>') : ''}`)}"><i style="height:${w.items.length / wmax * 100}%"></i></div>`).join('')}</div>
     <div class="xaxis">${weeks.map((w, i) => `<span>${i % 4 === 0 ? `${w.ws.getDate()}.${String(w.ws.getMonth() + 1).padStart(2, '0')}` : ''}</span>`).join('')}</div>`;
   const noDate = pub.filter(u => !u.published_date).length;
+  // площадки: частота — по дате площадки, охват — медиана по постам, где цифра внесена
+  const noCh = pub.filter(u => !chShort(u)).length;
+  const median = a => (a.length ? (a.length % 2 ? a[(a.length - 1) / 2] : (a[a.length / 2 - 1] + a[a.length / 2]) / 2) : null);
+  const chRows = CH.map(c => {
+    const on = pub.filter(u => u.pubOn && u.pubOn[c.k]), d = u => u.pubOn[c.k];
+    const last = on.map(d).filter(Boolean).sort().pop() || null;
+    const vals = on.map(u => u.stats[c.reach]).filter(v => v != null).sort((a, b) => a - b);
+    return { c, on, last, vals, med: median(vals), n30: on.filter(u => d(u) >= since(30)).length, n90: on.filter(u => d(u) >= since(90)).length,
+      strip: weeks.map(w => ({ w, items: on.filter(u => d(u) && d(u) >= isoOf(w.ws) && d(u) <= isoOf(w.we)) })) };
+  });
+  const nf = v => Math.round(v).toLocaleString('ru-RU');
+  const ago = iso => { const n = Math.round((today - dateOf(iso)) / 864e5); return n === 0 ? 'сегодня' : n === 1 ? 'вчера' : `${n} дн. назад`; };
   const th = S.theses.map(t => {
     const posts = S.units.filter(u => u.kind === 'post' && !u.archived && u.thesis === t.id);
     return { t, ideas: live.filter(u => u.kind === 'idea' && u.thesis === t.id).length, posts: posts.length, pub: posts.filter(u => u.stage === 'опубликован').length };
@@ -1195,6 +1221,12 @@ function renderStats() {
       <div class="panel"><h3>Ритм публикаций</h3><p class="sub">Постов в неделю за полгода, по дате публикации.${noDate ? ` У ${noDate} опубликованных даты нет — они не попали в график.` : ''}</p>
         ${rhythm}
         <details><summary>Таблицей</summary>${tableHtml(['Неделя', 'Постов', 'Какие'], weeks.filter(w => w.items.length).map(w => [`${dShort(isoOf(w.ws))} — ${dShort(isoOf(w.we))}`, w.items.length, w.items.map(u => u.id).join(', ')]))}</details></div>
+      <div class="panel wide"><h3>Площадки: частота и охват</h3><p class="sub">Полоса — те же 26 недель, что в ритме: светлая клетка — один пост на площадке, тёмная — два и больше. Охват — медиана на пост среди постов с цифрой: у LinkedIn показы, у остальных просмотры, поэтому площадки между собой по нему не сравнивать.${noCh ? ` У ${noCh} опубликованных площадка не отмечена.` : ''}</p>
+        <table class="tbl"><thead><tr><th>Площадка</th><th>26 недель</th><th class="num">За 30 дней</th><th class="num">За 90 дней</th><th class="num">В неделю за 90</th><th>Последний</th><th class="num">Охват, медиана</th></tr></thead>
+        <tbody>${chRows.map(r => `<tr><td>${esc(r.c.name)}</td><td><div class="strip">${r.strip.map(x => `<i class="l${Math.min(x.items.length, 2)}" data-tip="${esc(`<b>${dShort(isoOf(x.w.ws))} — ${dShort(isoOf(x.w.we))}</b>: ${x.items.length}${x.items.length ? '<br>' + x.items.map(u => esc(u.id + ' ' + u.title.slice(0, 48))).join('<br>') : ''}`)}"></i>`).join('')}</div></td>
+          <td class="num mono">${r.n30}</td><td class="num mono">${r.n90}</td><td class="num mono">${(r.n90 / 13).toFixed(1).replace('.', ',')}</td>
+          <td class="mono">${r.last ? `${dShort(r.last)} <span class="faint">${ago(r.last)}</span>` : '—'}</td>
+          <td class="num mono">${r.med != null ? `${nf(r.med)} <span class="faint">по ${r.vals.length} из ${r.on.length}</span>` : `<span class="faint">нет цифр</span>`}</td></tr>`).join('')}</tbody></table></div>
       <div class="panel wide"><h3>Тезисы и покрытие</h3><p class="sub">${zero} из ${th.length} тезисов без опубликованного поста. Сверху — самые недокрытые.</p>
         <table class="tbl"><thead><tr><th>Тезис</th><th>Пиллар</th><th class="num">Идей</th><th class="num">Постов</th><th class="num">Вышло</th></tr></thead>
         <tbody>${th.slice(0, thLim).map(r => `<tr data-q="${esc(r.t.id)}"><td class="title"><div><span class="uid">${esc(r.t.id)}</span> ${esc(r.t.title)}</div></td><td>${pillarHtml({ pillar: r.t.pillar })}</td><td class="num mono">${r.ideas}</td><td class="num mono">${r.posts}</td><td class="num mono">${r.pub || '<span class="faint">0</span>'}</td></tr>`).join('')}</tbody></table>
@@ -1202,9 +1234,9 @@ function renderStats() {
         <p class="sub" style="margin-top:8px">Клик по тезису — поиск его идей и постов на экране «Идеи».</p></div>
       <div class="panel wide"><h3>Результативность</h3>
         <div class="note">${icon('info')}<span>Цифры охвата внесены у ${perf.length} из ${pub.length} опубликованных постов. График появится, когда цифр станет больше — сейчас по ним нельзя сравнивать пиллары или форматы.</span></div>
-        ${perf.length ? `<table class="tbl"><thead><tr><th>Пост</th><th>Вышел</th><th class="num">Показы LI</th><th class="num">Реакции</th><th class="num">Комм.</th><th class="num">Сохр.</th><th class="num">Вовлечённость</th><th class="num">Просм. TG</th></tr></thead>
-        <tbody>${perf.map(u => `<tr data-open="${esc(u.path)}"><td class="title"><div><span class="uid">${esc(u.id)}</span> ${esc(u.title)}</div></td><td class="mono">${dShort(u.published_date)}</td>
-          ${['li_impressions', 'li_reactions', 'li_comments', 'li_saves'].map(k => `<td class="num mono">${u.stats[k] ?? '—'}</td>`).join('')}<td class="num mono">${er(u) != null ? (er(u) * 100).toFixed(1).replace('.', ',') + ' %' : '—'}</td><td class="num mono">${u.stats.tg_views ?? '—'}</td></tr>`).join('')}</tbody></table>` : ''}
+        ${perf.length ? `<table class="tbl"><thead><tr><th>Пост</th><th>Вышел</th><th>Где</th><th class="num">Показы LI</th><th class="num">Реакции</th><th class="num">Комм.</th><th class="num">Сохр.</th><th class="num">Вовлечённость</th><th class="num">Просм. TG</th><th class="num">Просм. FB</th></tr></thead>
+        <tbody>${perf.map(u => `<tr data-open="${esc(u.path)}"><td class="title"><div><span class="uid">${esc(u.id)}</span> ${esc(u.title)}</div></td><td class="mono">${dShort(u.published_date)}</td><td class="mono">${chShort(u) || '—'}</td>
+          ${['li_impressions', 'li_reactions', 'li_comments', 'li_saves'].map(k => `<td class="num mono">${u.stats[k] ?? '—'}</td>`).join('')}<td class="num mono">${er(u) != null ? (er(u) * 100).toFixed(1).replace('.', ',') + ' %' : '—'}</td><td class="num mono">${u.stats.tg_views ?? '—'}</td><td class="num mono">${u.stats.fb_views ?? '—'}</td></tr>`).join('')}</tbody></table>` : ''}
       </div>
     </div>`;
 }
@@ -1527,6 +1559,9 @@ function renderDrawer(fresh = false) {
         <span class="k">Статус</span><select class="sel" id="d-status">${statuses.map(s => `<option ${s === u.status ? 'selected' : ''}>${esc(s)}</option>`).join('')}${statuses.includes(u.status) ? '' : `<option selected disabled>${esc(u.status)}</option>`}</select>
         <span class="k">Пиллар</span><div class="inline"><select class="sel" id="d-pillar"><option value="">— не задан</option>${PILLARS.map(p => `<option value="${p.code}" ${u.pillar === p.code ? 'selected' : ''}>${esc(pName(p))}</option>`).join('')}</select>${u.pillar_inherited ? '<span class="faint">взят из тезиса, в файле пусто</span>' : ''}</div>
         <span class="k">Дата в плане</span><div class="inline"><input type="date" id="d-plan" value="${u.plan_date || ''}">${u.plan_date ? `<button class="btn ghost" id="d-plan-clear">${icon('x')}Убрать</button>` : ''}</div>
+        ${u.kind === 'post' ? `<span class="k">Где вышел</span><div class="inline">${CH.map(c => `<button class="chip" data-ch="${c.k}" aria-pressed="${!!u.published[c.k]}">${c.name}</button>`).join('')}</div>
+        <span class="k">Дата выхода</span><div class="inline"><input type="date" id="d-pub" value="${asDate(rawOf(u, 'published_date')) || ''}">${CH.filter(c => u.pubOn[c.k] && u.pubOn[c.k] !== u.published_date).map(c => `<span class="faint">${c.name} — ${dShort(u.pubOn[c.k])}</span>`).join('')}</div>
+        ${CH.filter(c => u.published[c.k]).map(c => `<span class="k">Охват ${c.short}</span><div class="inline stats">${c.stats.map(([k, l]) => `<label title="${k}"><input type="number" min="0" step="1" data-stat="${k}" value="${u.stats[k] ?? ''}" placeholder="—"><span>${l}</span></label>`).join('')}</div>`).join('')}` : ''}
       </div>
       <div class="fields">${meta.map(([k, v]) => `<span class="k">${esc(k)}</span><span>${esc(v)}</span>`).join('')}</div>
       ${lead ? '</details>' : `${commentsHtml(u)}
@@ -1542,6 +1577,16 @@ function renderDrawer(fresh = false) {
   $('#d-status').onchange = e => save(u, { status: e.target.value }, { label: `${u.id}: статус «${e.target.value}». Записано ${Store.label}` });
   $('#d-pillar').onchange = e => save(u, { pillar: e.target.value || null }, { label: `${u.id}: пиллар ${e.target.value ? pShort(e.target.value) : 'снят'}. Записано ${Store.label}` });
   $('#d-plan').onchange = e => save(u, { plan_date: e.target.value || null }, { label: e.target.value ? `${u.id} в плане на ${dShort(e.target.value)}` : `${u.id} убран из плана` });
+  // площадка: первая отметка ставит статус «опубликован» и дату выхода сегодня, если их нет
+  $$('[data-ch]').forEach(b => { b.onclick = () => {
+    const c = CH.find(x => x.k === b.dataset.ch), on = !u.published[c.k], f = { ['published_' + c.k]: on };
+    if (on && !asDate(rawOf(u, 'published_date'))) f.published_date = S.today;
+    if (on && u.status !== 'опубликован') f.status = 'опубликован';
+    save(u, f, { label: `${u.id}: ${c.name} — ${on ? 'вышел' : 'снято'}${f.status ? ', статус «опубликован»' : ''}. Записано ${Store.label}` });
+  }; });
+  const dp = $('#d-pub');
+  if (dp) dp.onchange = e => save(u, { published_date: e.target.value || null }, { label: e.target.value ? `${u.id}: вышел ${dShort(e.target.value)}` : `${u.id}: дата выхода снята` });
+  $$('[data-stat]').forEach(inp => { inp.onchange = () => save(u, { [inp.dataset.stat]: inp.value === '' ? null : inp.value }, { label: `${u.id}: ${inp.dataset.stat} ${inp.value || '—'}. Записано ${Store.label}` }); });
   const clr = $('#d-plan-clear');
   if (clr) clr.onclick = () => save(u, { plan_date: null }, { label: `${u.id} убран из плана` });
   const ta = $('#d-cmt');
