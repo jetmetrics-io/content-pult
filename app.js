@@ -1200,7 +1200,8 @@ function renderStats() {
       strip: weeks.map(w => ({ w, items: on.filter(u => d(u) && d(u) >= isoOf(w.ws) && d(u) <= isoOf(w.we)) })) };
   });
   const nf = v => Math.round(v).toLocaleString('ru-RU');
-  const ago = iso => { const n = Math.round((today - dateOf(iso)) / 864e5); return n === 0 ? 'сегодня' : n === 1 ? 'вчера' : `${n} дн. назад`; };
+  // дата в будущем — отложенная публикация (с 23.10: пост ставят в отложку и отмечают сразу)
+  const ago = iso => { const n = Math.round((today - dateOf(iso)) / 864e5); return n === 0 ? 'сегодня' : n === 1 ? 'вчера' : n === -1 ? 'завтра' : n < 0 ? `через ${-n} дн.` : `${n} дн. назад`; };
   const th = S.theses.map(t => {
     const posts = S.units.filter(u => u.kind === 'post' && !u.archived && u.thesis === t.id);
     return { t, ideas: live.filter(u => u.kind === 'idea' && u.thesis === t.id).length, posts: posts.length, pub: posts.filter(u => u.stage === 'опубликован').length };
