@@ -70,7 +70,8 @@ const whoName = l => (l.who === 'me' ? (l.n === TEXT_STEP ? 'пишешь ты' 
 const DOING = { 2: 'пишет детали с 2–3 вариантами формы', 3: 'собирает прототип: все строки с числами и раскладку словами', 4: 'собирает картинку в Figma', 5: 'пишет фактуру для текста и делает EN-копию картинки' };
 const ASK = { 2: 'Прочитай детали, выбери форму и нажми ✓', 3: 'Проверь прототип: строки, числа, раскладку', 4: 'Доведи картинку и нажми ✓', 5: 'Проверь фактуру' };
 const AFTER_YES = { 2: 'Claude соберёт прототип', 3: 'Claude соберёт картинку в Figma', 4: 'Claude напишет фактуру и сделает EN-копию', 5: 'текст пишешь ты: RU, потом EN' };
-const RUN = 'Claude двигает карточки по команде «двигай конвейер».';
+const RUN = 'Claude двигает карточки, когда ты нажимаешь «Двигай» вверху пульта или пишешь ему «двигай конвейер».';
+const CONV_REQ = '_pult/conveyor_request.json', CONV_STATE = '_pult/conveyor_state.json'; // кнопка «Двигай» (23.10.2026)
 const PREF_KEY = 'pult:prefs:v2';
 const MARKS_KEY = 'pult:marks:v1'; // неотправленные замечания к месту в тексте — только в этом браузере
 const TOKEN_KEY = 'pult:gh-token';
@@ -378,6 +379,14 @@ const Local = {
     if (!r.ok) throw new Error(r.status === 404 ? 'пульт отдаёт библиотеку форм с версии 21.10 — перезапусти ярлык «Пульт контента»' : 'код ' + r.status);
     return r.json();
   },
+  async conveyor(start = false) {
+    const r = await fetch('api/conveyor', start ? { method: 'POST' } : { cache: 'no-store' });
+    if (r.status === 404) throw new Error('кнопка «Двигай» работает с версии 23.10 — перезапусти ярлык «Пульт контента»');
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || r.status);
+    return j;
+  },
+  conveyorStart: () => Local.conveyor(true),
 };
 
 const GH = {
@@ -461,6 +470,26 @@ const GH = {
     if (!r.ok) throw new Error('GitHub не отдал библиотеку: ' + r.status);
     return r.json();
   },
+  async rawJson(path) {
+    const r = await GH.api(`/repos/${GH_REPO.owner}/${GH_REPO.repo}/contents/${encPath(path)}?ref=${GH_REPO.branch}`, { headers: { Accept: 'application/vnd.github.raw' } });
+    if (r.status === 404) return {};
+    if (!r.ok) throw new Error('GitHub: ' + r.status);
+    try { return await r.json(); } catch (e) { return {}; }
+  },
+  async conveyor() {
+    const [state, request] = await Promise.all([GH.rawJson(CONV_STATE), GH.rawJson(CONV_REQ)]);
+    return { state, request };
+  },
+  /* просьба «Двигай» — файлом в репо: мак забирает её синхронизацией и открывает сессию (conveyor.py) */
+  async conveyorStart() {
+    const url = `/repos/${GH_REPO.owner}/${GH_REPO.repo}/contents/${encPath(CONV_REQ)}`;
+    const cur = await GH.api(`${url}?ref=${GH_REPO.branch}`);
+    const sha = cur.ok ? (await cur.json()).sha : undefined;
+    const request = { id: new Date().toISOString(), from: /iPhone|iPad|Android/.test(navigator.userAgent) ? 'телефон' : 'браузер' };
+    const r = await GH.api(url, { method: 'PUT', body: JSON.stringify({ message: 'пульт: двигай конвейер', content: b64enc(JSON.stringify(request, null, 2) + '\n'), sha, branch: GH_REPO.branch }) });
+    if (!r.ok) throw new Error((await r.json()).message || r.status);
+    return { ok: true, state: (S.conv && S.conv.state) || {}, request };
+  },
   restore() {
     try { GH.token = sessionStorage.getItem(TOKEN_KEY) || localStorage.getItem(TOKEN_KEY); } catch (e) { GH.token = null; }
     return !!GH.token;
@@ -505,6 +534,7 @@ async function load() {
     S.loaded = true;
     S.lastLoad = Date.now();
     render();
+    refreshConv();
     return true;
   } catch (e) {
     if (MODE === 'gh' && !GH.token) { S.loaded = false; renderLogin(e.message); return false; }
@@ -700,6 +730,64 @@ function renderWhere() {
   where.innerHTML = MODE === 'gh'
     ? `<span class="where" title="Правки уходят коммитами в ${GH_REPO.owner}/${GH_REPO.repo}, оттуда — на мак">${icon('cloud')}GitHub</span>${GH.token ? `<button class="iconbtn" id="logout" title="Выйти" aria-label="Выйти">${icon('log-out')}</button>` : ''}`
     : `<span class="where" title="Правки пишутся в файлы на этом маке">${icon('hard-drive')}На маке</span>`;
+  renderConv();
+}
+
+/* ---------- кнопка «Двигай»: сессия Claude на маке, видна и с телефона (conveyor.py, 23.10.2026) ---------- */
+function convPhase(c) {
+  if (!c) return S.convErr ? 'idle' : 'none';
+  const st = c.state || {}, req = c.request || {};
+  if (st.running) return 'run';
+  if (req.id && req.id !== st.handled) return 'wait'; // просьба ушла, мак её ещё не забрал
+  return 'idle';
+}
+const hm = iso => { const d = new Date(iso); return isNaN(d) ? '' : d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }); };
+const dm = iso => { const d = new Date(iso); return isNaN(d) ? '' : `${d.getDate()} ${MON[d.getMonth()]}`; };
+function renderConv() {
+  const el = $('#conv');
+  if (!el) return;
+  const ph = convPhase(S.conv), st = (S.conv && S.conv.state) || {};
+  if (!S.loaded || (MODE === 'gh' && !GH.token) || ph === 'none') { el.innerHTML = ''; return; }
+  const last = st.started && !st.running ? ` Прошлая сессия: ${dm(st.started)}, ${hm(st.started)}${st.ended ? `–${hm(st.ended)}` : ''}.` : '';
+  el.innerHTML = ph === 'run'
+    ? `<button class="convst run" id="conv-info" title="Сессия «${esc(st.session)}» открыта с ${hm(st.started)}"><span class="live"></span>Claude работает</button>`
+    : ph === 'wait'
+      ? `<button class="convst wait" id="conv-info" title="Просьба ушла, мак её ещё не забрал">${icon('hourglass')}Ждём мак</button>`
+      : `<button class="btn primary convgo" id="conv-go" title="${esc('Открыть на маке сессию Claude: он разберёт всё, что ждёт его. Сессию видно в приложении Claude на телефоне.' + last)}">${icon('play')}Двигай</button>`;
+  icons();
+}
+async function refreshConv() {
+  try { S.conv = await Store.conveyor(); S.convErr = null; }
+  catch (e) { S.conv = null; S.convErr = e.message; }
+  renderConv();
+  convPoll();
+}
+/* пока ждём мак или сессия идёт — проверяем сами, чтобы кнопка сменилась без ↻ */
+function convPoll(ms) {
+  clearTimeout(S.convTimer);
+  const ph = convPhase(S.conv);
+  if (ph === 'wait' || ph === 'run') S.convTimer = setTimeout(refreshConv, ms || (ph === 'wait' ? 20000 : 60000));
+}
+async function convGo() {
+  const n = S.units.filter(u => (laneOf(u) || {}).who === 'claude').length;
+  if (!confirm(`Открыть на маке сессию Claude?\n\nОн разберёт всё, что ждёт его${n ? ` (карточек: ${n})` : ''}. Сессию видно в приложении Claude на телефоне, отвечать можно оттуда.${MODE === 'gh' ? '\n\nМак заметит просьбу в течение 2–4 минут, если он включён и не спит.' : ''}`)) return;
+  const btn = $('#conv-go');
+  if (btn) btn.disabled = true;
+  try {
+    const r = await Store.conveyorStart();
+    S.conv = { state: r.state, request: r.request };
+    S.convErr = null;
+    if (MODE === 'gh') toast('Просьба ушла. Мак откроет сессию в течение 2–4 минут, если он включён и не спит.', { ms: 9000 });
+    else if (r.ok) toast(`Сессия «${r.state.session}» открылась в Терминале. На телефоне она в приложении Claude.`, { ms: 9000 });
+    else toast('Сессия уже открыта: пиши в неё.', { kind: 'warn' });
+  } catch (e) { toast('Не получилось: ' + e.message, { kind: 'err' }); if (btn) btn.disabled = false; return; }
+  renderConv();
+  convPoll(MODE === 'gh' ? 20000 : 5000); // GitHub отдаёт свежий файл не сразу: перечитываем позже
+}
+function convInfo() {
+  const st = (S.conv && S.conv.state) || {};
+  if (convPhase(S.conv) === 'run') toast(`Сессия «${st.session}» открыта с ${hm(st.started)}. Пиши ей в приложении Claude или в Терминале на маке. Закрыть — напиши ей «закрывай».${st.waiting ? ' Ещё одна просьба «Двигай» ждёт: начнётся, когда эту закроют.' : ''}`, { ms: 12000 });
+  else toast('Просьба ушла на GitHub. Мак заберёт её при синхронизации (раз в 2 минуты) и откроет сессию. Если мак выключен или спит — когда проснётся.', { ms: 12000 });
 }
 function renderFilters() {
   $('#filters').classList.toggle('static', S.view === 'forms'); // у форм фишек много: не липнут к верху
@@ -1695,6 +1783,8 @@ document.addEventListener('click', e => {
   const t = e.target;
   if (t.closest('#logout')) { GH.logout(); S.loaded = false; renderLogin(); return; }
   if (!S.loaded) return;
+  if (t.closest('#conv-go')) { convGo(); return; }
+  if (t.closest('#conv-info')) { convInfo(); return; }
   const star = t.closest('[data-star]');
   if (star) {
     e.stopPropagation();

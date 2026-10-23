@@ -54,6 +54,16 @@ svg.lucide { width: 16px; height: 16px; stroke-width: 1.75; flex: none; }
 .whereb { display: inline-flex; align-items: center; gap: 6px; }
 .where { display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 10px; border-radius: 13px; background: var(--jm-green-tint); color: var(--jm-green-deep); font-size: 12px; font-weight: 600; white-space: nowrap; }
 .where svg.lucide { width: 14px; height: 14px; }
+/* кнопка «Двигай»: сессия Claude на маке (23.10.2026) */
+.convb { display: inline-flex; }
+.convb .btn { height: 36px; padding: 0 14px; white-space: nowrap; }
+.convb .btn:disabled { opacity: .6; }
+.convst { display: inline-flex; align-items: center; gap: 7px; height: 36px; padding: 0 12px; border: 0; border-radius: var(--jm-r-md); font-weight: 600; font-size: 13px; white-space: nowrap; cursor: pointer; }
+.convst svg.lucide { width: 16px; height: 16px; }
+.convst.run { color: var(--jm-green-deep); background: var(--jm-green-tint); }
+.convst.wait { color: var(--jm-yellow-text); background: var(--jm-yellow-tint); }
+.convst .live { width: 8px; height: 8px; border-radius: 50%; background: var(--jm-green); animation: live 1.6s var(--jm-ease) infinite; }
+@keyframes live { 50% { opacity: .3; } }
 
 /* ---------- вход ---------- */
 .login { max-width: 400px; margin: 72px auto; padding: 28px; display: grid; gap: 14px; background: var(--jm-surface); border: var(--jm-border); border-radius: var(--jm-r-lg); box-shadow: var(--jm-shadow-sm, 0 1px 2px rgba(0,0,0,.06)); }
@@ -419,6 +429,7 @@ details.stage[open] summary { margin-bottom: 12px; }
   .tabs { order: 3; width: 100%; overflow-x: auto; }
   .tab { padding: 0 10px; }
   .search { flex: 1; min-width: 0; } .search input { width: 100%; }
+  .where { display: none; } /* на телефоне пульт всегда с GitHub: место — кнопке «Двигай» */
   .filters { position: static; padding: 8px 12px; }
   #view { padding-left: 12px; padding-right: 12px; }
   .dhead .linkbtn.obs { display: none; }
