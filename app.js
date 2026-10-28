@@ -1,5 +1,5 @@
 'use strict';
-/* Пульт контента. Данные — шапки md-файлов контент-системы, правки пишутся обратно в файл.
+/* Пульт контента и пульт продуктов (переключатель вверху, 28.10.2026). Данные — шапки md-файлов контент-системы, правки пишутся обратно в файл.
    Два режима: на маке (pult.py читает и пишет файлы) и GitHub (страница на Pages, файлы — в закрытом репо через API).
    Разбор шапок и правка — здесь, одинаково для обоих режимов. */
 
@@ -72,6 +72,20 @@ const ASK = { 2: 'Прочитай детали, выбери форму и на
 const AFTER_YES = { 2: 'Claude соберёт прототип', 3: 'Claude соберёт картинку в Figma', 4: 'Claude напишет фактуру и сделает EN-копию', 5: 'текст пишешь ты: RU, потом EN' };
 const RUN = 'Claude двигает карточки, когда ты нажимаешь «Двигай» вверху пульта или пишешь ему «двигай конвейер».';
 const CONV_REQ = '_pult/conveyor_request.json', CONV_STATE = '_pult/conveyor_state.json'; // кнопка «Двигай» (23.10.2026)
+/* пульт продуктов (28.10.2026): воронка от идеи до воркспейса, карточка — products/PR-NNN ….md.
+   Этапы — слова Дмитрия; что на выходе — по Content System/SYSTEM.md. Отсеянное: status: нафиг + why_not, этап остаётся тем, где отсеяли */
+const PROD_DIR = 'products';
+const PSTAGES = [
+  { n: 1, name: 'Идея', icon: 'lightbulb', out: 'Одна строка: чья задача и что человек получает.' },
+  { n: 2, name: 'Идея детально', icon: 'notebook-pen', out: 'Класс, зачем нам, чем лучше, чем спросить ChatGPT, из чего собираем. Порог успеха и порог отказа — цифрой и сроком.' },
+  { n: 3, name: 'Прототип-демка', icon: 'drafting-compass', out: 'Демка, которую можно потрогать или показать роликом.' },
+  { n: 4, name: 'Лендинг', icon: 'layout-template', out: 'Упаковка: УТП и ценности на двух языках, кнопка «хочу».' },
+  { n: 5, name: 'Готовый продукт', icon: 'package-check', out: 'Продукт работает на двух языках, к запуску готова пачка контента.' },
+  { n: 6, name: 'В воркспейсе', icon: 'rocket', out: 'Живёт в Хабе и Workspace. 2–3 недели замера против порога, потом решение: развивать или закрыть.' },
+];
+const PROD_STATUSES = ['в работе', 'пауза', 'нафиг'];
+const DECISIONS = ['развивать', 'закрыть'];
+const pStageVal = n => `${n} ${PSTAGES[n - 1].name.toLowerCase()}`;
 const PREF_KEY = 'pult:prefs:v2';
 const MARKS_KEY = 'pult:marks:v1'; // неотправленные замечания к месту в тексте — только в этом браузере
 const TOKEN_KEY = 'pult:gh-token';
@@ -79,6 +93,7 @@ const TOKEN_KEY = 'pult:gh-token';
 const S = {
   files: [], units: [], by: {}, theses: [], thesesBy: {}, became: {}, root: MAC_ROOT, today: null,
   view: 'ideas', f: { pillar: 'all', src: 'all', hidden: false, cmt: false, noPosted: true, mine: false }, q: '', drafts: {},
+  mode: 'content', prods: [], pf: { out: false, cmt: false }, noProd: false, // пульт продуктов: карточки, фильтры, старый pult.py без products/
   ideasKind: 'idea', sort: 'id', planOffset: 0, rateMode: 'duel', rateKind: 'idea',
   tbl: { k: 'rank', dir: -1 }, expand: {}, drawer: null, dragKey: null, pair: null, lastPair: null,
   lastLoad: 0, loaded: false, loading: false,
@@ -91,15 +106,17 @@ const S = {
 function loadPrefs() {
   try {
     const p = JSON.parse(localStorage.getItem(PREF_KEY) || '{}');
-    for (const k of ['view', 'ideasKind', 'sort', 'rateMode', 'rateKind']) if (p[k]) S[k] = p[k];
+    for (const k of ['view', 'ideasKind', 'sort', 'rateMode', 'rateKind', 'mode']) if (p[k]) S[k] = p[k];
     if (p.f) Object.assign(S.f, p.f);
+    if (p.pf) Object.assign(S.pf, p.pf);
+    if (S.mode !== 'prod') S.mode = 'content';
     if (p.ff) Object.assign(S.ff, p.ff);
     if (!SORTS.some(s => s[0] === S.sort)) S.sort = 'id';
     if (S.view === 'rate') S.view = 'ideas'; // экран «Оценка» снят 21.10.2026
   } catch (e) { /* хранилище недоступно */ }
 }
 function savePrefs() {
-  try { localStorage.setItem(PREF_KEY, JSON.stringify({ view: S.view, ideasKind: S.ideasKind, sort: S.sort, rateMode: S.rateMode, rateKind: S.rateKind, f: S.f, ff: S.ff })); } catch (e) { /* нет хранилища */ }
+  try { localStorage.setItem(PREF_KEY, JSON.stringify({ view: S.view, ideasKind: S.ideasKind, sort: S.sort, rateMode: S.rateMode, rateKind: S.rateKind, f: S.f, ff: S.ff, mode: S.mode, pf: S.pf })); } catch (e) { /* нет хранилища */ }
 }
 
 /* ---------- шапка md: чтение и построчная правка (та же логика, что в _pult/fm.py) ---------- */
@@ -332,6 +349,28 @@ function buildThesis(file) {
   const id = String(fields.id || '') || (stem.match(/^(T-\d{3})/) || [null, stem])[1];
   return { id, title: stem.startsWith(id) ? stem.slice(id.length).trim() : stem, pillar: normPillar(fields.pillar), path: file.path };
 }
+function buildProduct(file) {
+  const { fields, body } = FM.read(file.text);
+  if (fields.type !== 'product') return null;
+  const stem = file.path.split('/').pop().replace(/\.md$/, '');
+  const id = String(fields.id || '').trim() || (stem.match(/^(PR-\d{3})/) || [null, stem])[1];
+  let title = fields.title ? String(fields.title) : stem;
+  if (!fields.title && title.startsWith(id)) title = title.slice(id.length).replace(/^[\s—-]+/, '') || id;
+  const n = parseInt(String(fields.stage ?? ''), 10);
+  const status = String(fields.status || 'в работе').trim();
+  const str = k => (fields[k] == null || fields[k] === '' ? null : String(fields[k]));
+  const clean = stripComments(body);
+  const p = {
+    kind: 'product', id, path: file.path, ver: file.ver, text: file.text, body, title, status,
+    n: PSTAGES[n - 1] ? n : 1, out: status === 'нафиг',
+    created: asDate(fields.created), archived_on: asDate(fields.archived),
+    threshold: str('threshold'), fact: str('fact'), decision: str('decision'), why_not: str('why_not'),
+    preview: ((clean.match(/\*\*Суть[.:]\*\*\s*(.+)/) || [])[1] || '').replace(/\*\*|__|`/g, '').trim() || firstText(clean),
+    comments: parseComments(body),
+  };
+  p.cmtOpen = p.comments.filter(c => !c.done).length;
+  return p;
+}
 function derive(u) {
   const t = S.thesesBy[u.thesis];
   u.thesis_title = t ? t.title : null;
@@ -343,11 +382,12 @@ function ingest(files) {
   S.files = files;
   S.theses = files.filter(f => f.path.startsWith('theses/')).map(buildThesis).filter(Boolean).sort((a, b) => (a.id < b.id ? -1 : 1));
   S.thesesBy = Object.fromEntries(S.theses.map(t => [t.id, t]));
-  const units = files.filter(f => !f.path.startsWith('theses/')).map(buildUnit).filter(Boolean);
+  const units = files.filter(f => !f.path.startsWith('theses/') && !f.path.startsWith(PROD_DIR + '/')).map(buildUnit).filter(Boolean);
+  S.prods = files.filter(f => f.path.startsWith(PROD_DIR + '/')).map(buildProduct).filter(Boolean);
   S.became = {};
   units.forEach(u => { if (u.kind === 'post' && u.idea_ref) (S.became[u.idea_ref] = S.became[u.idea_ref] || []).push(u.id); });
   S.units = units.map(derive);
-  S.by = Object.fromEntries(S.units.map(u => [u.path, u]));
+  S.by = Object.fromEntries([...S.units, ...S.prods].map(u => [u.path, u]));
 }
 
 /* ---------- хранилища: файлы на маке и репозиторий на GitHub ---------- */
@@ -364,6 +404,7 @@ const Local = {
     const j = await r.json();
     if (!r.ok) throw new Error(j.error || r.status);
     S.root = j.root;
+    S.noProd = !j.products; // pult.py до 28.10 продукты не отдаёт
     return j.files.map(f => ({ path: f.path, text: f.text, ver: f.mtime }));
   },
   async write(u, text) {
@@ -371,6 +412,14 @@ const Local = {
     const j = await r.json();
     if (r.status === 409) throw new Conflict({ path: u.path, text: j.text, ver: j.mtime });
     if (!r.ok) throw new Error(j.error || r.status);
+    return j.mtime;
+  },
+  /* новая карточка продукта: сервер пишет, только если такого файла ещё нет */
+  async create(path, text) {
+    const r = await fetch('api/write', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path, text, create: true }) });
+    const j = await r.json();
+    if (r.status === 409) throw new Error('номер уже занят — обнови пульт и заведи ещё раз');
+    if (!r.ok) throw new Error(S.noProd ? 'пульт заводит продукты с версии 28.10 — перезапусти ярлык «Пульт контента»' : j.error || r.status);
     return j.mtime;
   },
   imageSrc: name => Promise.resolve('api/file?name=' + encodeURIComponent(name)),
@@ -411,12 +460,12 @@ const GH = {
   },
   /* список файлов с oid — один лёгкий запрос; тексты — только тех, что ещё не видели, частями параллельно */
   async list() {
-    const dirs = ['ideas', 'posts', 'posts/_archive', 'theses'];
+    const dirs = ['ideas', 'posts', 'posts/_archive', 'theses', PROD_DIR];
     let want = [];
     try {
       const repo = await GH.gql(`query($o:String!,$r:String!){repository(owner:$o,name:$r){${dirs.map((d, i) => `d${i}:object(expression:"${GH_REPO.branch}:${d}"){...on Tree{entries{name type oid}}}`).join(' ')}}}`);
       dirs.forEach((d, i) => ((repo['d' + i] && repo['d' + i].entries) || []).forEach(e => {
-        if (e.type === 'blob' && e.name.endsWith('.md') && (d !== 'ideas' || /^I-/.test(e.name))) want.push({ path: `${d}/${e.name}`, oid: e.oid });
+        if (e.type === 'blob' && e.name.endsWith('.md') && (d !== 'ideas' || /^I-/.test(e.name)) && (d !== PROD_DIR || /^PR-/.test(e.name))) want.push({ path: `${d}/${e.name}`, oid: e.oid });
       }));
       const missing = [...new Set(want.map(e => e.oid).filter(o => GH.cache[o] == null))];
       const parts = [];
@@ -439,7 +488,7 @@ const GH = {
     if (!r.ok) throw new Error(r.status === 404 ? 'репозиторий не найден или к нему нет доступа' : 'GitHub не отдал список файлов: ' + r.status);
     const tree = (await r.json()).tree;
     GH.tree = tree;
-    const want = tree.filter(e => e.type === 'blob' && (/^ideas\/I-[^/]+\.md$/.test(e.path) || /^posts\/(_archive\/)?[^/]+\.md$/.test(e.path) || /^theses\/[^/]+\.md$/.test(e.path)));
+    const want = tree.filter(e => e.type === 'blob' && (/^ideas\/I-[^/]+\.md$/.test(e.path) || /^posts\/(_archive\/)?[^/]+\.md$/.test(e.path) || /^theses\/[^/]+\.md$/.test(e.path) || /^products\/PR-[^/]+\.md$/.test(e.path)));
     const out = [];
     for (let i = 0; i < want.length; i += 16) {
       out.push(...await Promise.all(want.slice(i, i + 16).map(async e => ({ path: e.path, text: GH.cache[e.sha] ?? (GH.cache[e.sha] = await GH.blobText(e.sha)), ver: e.sha }))));
@@ -454,6 +503,15 @@ const GH = {
       if (cur && cur.sha && cur.sha !== u.ver) throw new Conflict({ path: u.path, text: b64dec(cur.content), ver: cur.sha });
     }
     const j = await r.json();
+    if (!r.ok) throw new Error(j.message || r.status);
+    GH.cache[j.content.sha] = text;
+    return j.content.sha;
+  },
+  /* новый файл: PUT без sha — GitHub откажет (422), если такой уже есть */
+  async create(path, text, message) {
+    const r = await GH.api(`/repos/${GH_REPO.owner}/${GH_REPO.repo}/contents/${encPath(path)}`, { method: 'PUT', body: JSON.stringify({ message, content: b64enc(text), branch: GH_REPO.branch }) });
+    const j = await r.json();
+    if (r.status === 422) throw new Error('номер уже занят — обнови пульт и заведи ещё раз');
     if (!r.ok) throw new Error(j.message || r.status);
     GH.cache[j.content.sha] = text;
     return j.content.sha;
@@ -547,6 +605,12 @@ async function load() {
 function replaceFile(file) {
   const i = S.files.findIndex(f => f.path === file.path);
   if (i >= 0) S.files[i] = file; else S.files.push(file);
+  if (file.path.startsWith(PROD_DIR + '/')) {
+    const p = buildProduct(file);
+    S.prods = S.prods.filter(x => x.path !== file.path);
+    if (p) { S.prods.push(p); S.by[file.path] = p; } else delete S.by[file.path];
+    return p;
+  }
   const old = S.by[file.path];
   const nu = buildUnit(file);
   if (!nu) { ingest(S.files); return null; }
@@ -559,6 +623,7 @@ function replaceFile(file) {
 }
 
 function rawOf(u, k) {
+  if (u.kind === 'product') return FM.read(u.text).fields[k] ?? null;
   if (k === 'pillar') return u.pillar_inherited ? null : u.pillar;
   if (k === 'my_duels') return u.my_duels || null;
   // поля конвейера: в карточке под этими именами другое (stage — статус, archived — признак), прежнее значение — из файла
@@ -570,11 +635,13 @@ function validate(u, fields) {
   for (const [k, v0] of Object.entries(fields)) {
     let v = v0;
     if (v === '' || v == null) { out[k] = null; continue; }
-    if (k === 'status' && !(u.kind === 'idea' ? IDEA_STATUSES : POST_STATUSES).includes(v)) throw new Error(`статус «${v}» не из списка`);
+    if (k === 'status' && !(u.kind === 'idea' ? IDEA_STATUSES : u.kind === 'product' ? PROD_STATUSES : POST_STATUSES).includes(v)) throw new Error(`статус «${v}» не из списка`);
     if (k === 'plan_date' && !/^\d{4}-\d{2}-\d{2}$/.test(v)) throw new Error('дата должна быть ГГГГ-ММ-ДД');
     if (k === 'pillar') { if (!PMAP[v]) throw new Error('неизвестный пиллар'); v = PMAP[v].link; }
     if (k === 'format_pick' && !/^V-\d{2,3}$/.test(v)) throw new Error('форма — номер вида V-12');
-    if (k === 'stage' && !/^[2-6] \S/.test(v)) throw new Error('этап — от 2 до 6');
+    if (k === 'stage' && u.kind === 'product' && !/^[1-6] \S/.test(v)) throw new Error('этап продукта — от 1 до 6');
+    if (k === 'stage' && u.kind !== 'product' && !/^[2-6] \S/.test(v)) throw new Error('этап — от 2 до 6');
+    if (k === 'decision' && !DECISIONS.includes(v)) throw new Error('решение — развивать или закрыть');
     if (k === 'turn' && !['claude', 'дмитрий'].includes(v)) throw new Error('ход — claude или дмитрий');
     if (k === 'my_score') { v = Number(v); if (!(v >= 1 && v <= 5)) throw new Error('оценка — от 1 до 5'); }
     if (k === 'my_elo' || k === 'my_duels') { v = Math.round(Number(v)); if (!(v >= 0)) throw new Error(`${k}: нужно число`); }
@@ -589,6 +656,7 @@ function commitMessage(u, fields) {
     status: `статус → ${v}`, plan_date: v ? `в план на ${v}` : 'убран из плана', my_score: v ? `оценка ${v}` : 'оценка снята',
     pillar: `пиллар ${normPillar(v) || 'снят'}`, my_elo: 'дуэль', format_pick: v ? `форма ${v}` : 'форма снята',
     stage: v ? `этап → ${v}` : null, published_date: v ? `вышел ${v}` : 'дата выхода снята',
+    threshold: 'порог', fact: 'факт', decision: v ? `решение: ${v}` : 'решение снято',
   })[k] || (k.startsWith('published_') && CH.find(c => k === 'published_' + c.k) ? `${CH.find(c => k === 'published_' + c.k).name} ${v ? 'да' : 'нет'}` : null)
     || (STAT_KEYS.includes(k) ? `${k} ${v ?? '—'}` : null)).filter(Boolean);
   return `пульт: ${u.id} ${parts.join(', ')}`;
@@ -747,7 +815,7 @@ function renderConv() {
   const el = $('#conv');
   if (!el) return;
   const ph = convPhase(S.conv), st = (S.conv && S.conv.state) || {};
-  if (!S.loaded || (MODE === 'gh' && !GH.token) || ph === 'none') { el.innerHTML = ''; return; }
+  if (!S.loaded || (MODE === 'gh' && !GH.token) || ph === 'none' || S.mode === 'prod') { el.innerHTML = ''; return; } // «Двигай» — про конвейер контента
   const last = st.started && !st.running ? ` Прошлая сессия: ${dm(st.started)}, ${hm(st.started)}${st.ended ? `–${hm(st.ended)}` : ''}.` : '';
   el.innerHTML = ph === 'run'
     ? `<button class="convst run" id="conv-info" title="Сессия «${esc(st.session)}» открыта с ${hm(st.started)}"><span class="live"></span>Claude работает</button>`
@@ -790,7 +858,8 @@ function convInfo() {
   else toast('Просьба ушла на GitHub. Мак заберёт её при синхронизации (раз в 2 минуты) и откроет сессию. Если мак выключен или спит — когда проснётся.', { ms: 12000 });
 }
 function renderFilters() {
-  $('#filters').classList.toggle('static', S.view === 'forms'); // у форм фишек много: не липнут к верху
+  $('#filters').classList.toggle('static', S.mode === 'content' && S.view === 'forms'); // у форм фишек много: не липнут к верху
+  if (S.mode === 'prod') { $('#filters').innerHTML = prodFiltersHtml(); filtersTail(); return; }
   if (S.view === 'forms') { $('#filters').innerHTML = formFiltersHtml(); filtersTail(); return; }
   const base = S.units.filter(u => S.f.hidden || !(u.stage === 'отклонено' || u.archived));
   const cnt = k => base.filter(u => (k === 'none' ? !u.pillar : u.pillar === k)).length;
@@ -808,7 +877,7 @@ function renderFilters() {
 function filtersTail() {
   const ideas = S.units.filter(u => u.kind === 'idea' && ['идея', 'в работе'].includes(u.stage) && !becamePost(u)).length;
   const live = S.units.filter(u => u.kind === 'post' && !u.archived && ['идея', 'в работе', 'черновик', 'готов'].includes(u.stage)).length;
-  $('#counts').textContent = `${ideas} идей в банке · ${live} постов в работе · ждут тебя ${S.units.filter(waitsMe).length}`;
+  $('#counts').textContent = S.mode === 'prod' ? prodCounts() : `${ideas} идей в банке · ${live} постов в работе · ждут тебя ${S.units.filter(waitsMe).length}`;
   $$('#tabs .tab').forEach(t => t.setAttribute('aria-selected', String(t.dataset.view === S.view)));
   renderWhere();
 }
@@ -1477,11 +1546,13 @@ function commentsHtml(u, withInput = true) {
       ${c.replies.map(r => `<div class="creply">${icon('corner-down-right')}${esc(r)}</div>`).join('')}
     </div>`).join('');
   if (!withInput) return list ? `<div class="cmts"><p class="section-l">Комментарии для Claude</p>${list}</div>` : '';
+  const ph = u.kind === 'product' ? 'Что Claude сделать по этому продукту: расписать детально, собрать демку, написать лендинг…'
+    : `Что Claude учесть по этой ${u.kind === 'idea' ? 'идее' : 'заметке'}: поправить угол, связать с другой идеей, не брать…`;
   return `<div class="cmts"><p class="section-l">Комментарии для Claude</p>
     ${list}
-    <textarea id="d-cmt" rows="3" placeholder="Что Claude учесть по этой ${u.kind === 'idea' ? 'идее' : 'заметке'}: поправить угол, связать с другой идеей, не брать…"></textarea>
+    <textarea id="d-cmt" rows="3" placeholder="${ph}"></textarea>
     <div class="inline"><button class="btn primary" id="d-cmt-send">${icon('send')}Отправить</button>
-      <span class="hint faint">Cmd+Enter. Запишется в файл, Claude заберёт при следующей работе с контентом.</span></div>
+      <span class="hint faint">Cmd+Enter. Запишется в файл, Claude заберёт при следующей работе с ${u.kind === 'product' ? 'продуктами' : 'контентом'}.</span></div>
   </div>`;
 }
 function stampNow() { const d = new Date(); return `${isoOf(d)} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; }
@@ -1607,8 +1678,10 @@ function postDecideHtml(u) {
 }
 function renderDrawer(fresh = false) {
   if (String(S.drawer).startsWith('form:')) { renderFormDrawer(fresh); return; }
+  if (S.drawer === 'new:product') { renderNewProd(fresh); return; }
   const u = S.by[S.drawer];
   if (!u) { closeDrawer(); return; }
+  if (u.kind === 'product') { renderProdDrawer(u, fresh); return; }
   // файл не менялся — не перерисовывать: запись соседней карточки не должна сбивать ввод в этой
   const sig = u.text + (S.forms ? '|f' : '') + '|' + JSON.stringify(marksOf(u));
   if (!fresh && $('.drawer') && S.drawn === sig) return;
@@ -1709,6 +1782,221 @@ function renderDrawer(fresh = false) {
   }
 }
 
+/* ---------- пульт продуктов: воронка (28.10.2026) ---------- */
+function prodPass(p) {
+  if (p.out && !S.pf.out) return false;
+  if (S.pf.cmt && !p.cmtOpen) return false;
+  if (S.q) {
+    const hay = [p.id, p.title, p.preview, p.why_not, p.threshold, ...p.comments.map(c => c.text)].join(' ').toLowerCase();
+    if (!S.q.toLowerCase().split(/\s+/).filter(Boolean).every(w => hay.includes(w))) return false;
+  }
+  return true;
+}
+function prodFiltersHtml() {
+  return `<label class="toggle"><input type="checkbox" id="p-out" ${S.pf.out ? 'checked' : ''}>Показать отсеянные («нафиг»)<span class="c">${S.prods.filter(p => p.out).length}</span></label>
+    <label class="toggle"><input type="checkbox" id="p-cmt" ${S.pf.cmt ? 'checked' : ''}>${icon('message-circle')}Только с комментариями, которые Claude ещё не учёл<span class="c">${S.prods.filter(p => p.cmtOpen).length}</span></label>`;
+}
+function prodCounts() {
+  const live = S.prods.filter(p => !p.out);
+  const ws = live.filter(p => p.n === 6).length, pause = live.filter(p => p.status === 'пауза').length;
+  return `${live.length - ws} в воронке · ${ws} в воркспейсе${pause ? ` · на паузе ${pause}` : ''}`;
+}
+function prodMini(p, note = '') {
+  const t = [];
+  if (p.status === 'пауза') t.push(`<span class="tag">${icon('pause')}пауза</span>`);
+  if (p.decision) t.push(`<span class="tag ${p.decision === 'развивать' ? 'green' : 'coral'}">${esc(p.decision)}</span>`);
+  if (p.cmtOpen) t.push(`<span class="tag cmt" title="Комментарии, которые Claude ещё не учёл">${icon('message-circle')}${p.cmtOpen}</span>`);
+  return `<div class="mini static${p.status === 'пауза' ? ' paused' : ''}" data-open="${esc(p.path)}">
+    <div class="row"><span class="uid">${esc(p.id)}</span><span class="r">${t.join('')}</span></div>
+    <div class="t">${esc(p.title)}</div>${note ? `<div class="mnote">${esc(note)}</div>` : ''}
+  </div>`;
+}
+function renderProds() {
+  const list = S.prods.filter(prodPass);
+  const byId = (a, b) => (a.status === 'пауза') - (b.status === 'пауза') || (a.id < b.id ? -1 : 1);
+  const cols = PSTAGES.map(s => ({ ...s, items: list.filter(p => !p.out && p.n === s.n).sort(byId) }));
+  if (S.pf.out) cols.push({ n: 'out', name: 'Нафиг', icon: 'ban', items: list.filter(p => p.out).sort((a, b) => String(b.archived_on || '').localeCompare(String(a.archived_on || '')) || (a.id < b.id ? 1 : -1)) });
+  const strip = cols.filter(c => c.n !== 'out').map(c => `<button class="ls${c.items.length ? '' : ' zero'}" data-plane="${c.n}"><span class="ls-n">${c.n}</span>${esc(c.name)}<b>${c.items.length}</b></button>`).join(`<span class="ls-arr">${icon('chevron-right')}</span>`);
+  const note = p => (p.out ? `с этапа «${PSTAGES[p.n - 1].name}»${p.why_not ? ': ' + p.why_not : ''}`
+    : p.n === 6 && (p.threshold || p.fact) ? [p.threshold && `порог: ${p.threshold}`, p.fact && `факт: ${p.fact}`].filter(Boolean).join(' · ') : '');
+  const col = c => {
+    const lim = S.expand['p:' + c.n] ? c.items.length : LIMIT;
+    const body = c.items.length ? c.items.slice(0, lim).map(p => prodMini(p, note(p))).join('') + (c.items.length > lim ? `<button class="more" data-expand="p:${c.n}">ещё ${c.items.length - lim}</button>` : '') : '<p class="lempty">пусто</p>';
+    return `<section class="col lane${c.items.length ? '' : ' empty'}" id="plane-${c.n}">
+      <div class="colhead">${icon(c.icon)}<span>${typeof c.n === 'number' ? c.n + ' · ' : ''}${esc(c.name)}</span><span class="n">${c.items.length}</span></div>
+      <div class="colbody" data-scroll="plane:${c.n}">${body}</div></section>`;
+  };
+  const width = c => (c.items.length ? 'minmax(220px, 1fr)' : 'minmax(170px, .5fr)'); // «Идея детально» длиннее этапов контента
+  const old = MODE === 'local' && S.noProd ? `<div class="note">${icon('triangle-alert')}<span>Пульт на маке запущен до 28.10 и продуктов не видит. Закрой окно терминала с пультом и открой ярлык «Пульт контента» заново.</span></div>` : '';
+  const first = !S.prods.length && !old ? `<div class="note out">${icon('lightbulb')}<span>Воронка пустая. Заведи первую идею кнопкой «Идея продукта»: название и одна строка — чья задача и что человек получает.</span></div>` : '';
+  return `<div class="viewhead"><h1>Воронка продуктов</h1><span class="hint">От идеи до воркспейса. Карточку двигают кнопки в ней: дальше, назад, нафиг с причиной.</span><div class="spacer"></div>
+      <button class="btn primary" data-newprod>${icon('plus')}Идея продукта</button></div>
+    ${old}${first}
+    <div class="lanes-strip">${strip}</div>
+    <div class="board" style="grid-template-columns:${cols.map(width).join(' ')}">${cols.map(col).join('')}</div>`;
+}
+
+/* новая идея продукта: название и суть → products/PR-NNN Название.md на этапе «Идея» */
+function prodTemplate(id, title, gist) {
+  return `---
+type: product
+id: ${id}
+title: ${FM.format(title)}
+stage: ${pStageVal(1)}
+status: в работе
+created: ${S.today}
+threshold:
+fact:
+decision:
+---
+
+# ${id} ${title}
+
+**Суть.** ${gist || 'Чья задача и что человек получает.'}
+
+## Детально
+
+- **Класс:** на данных пользователя · на контексте без данных · внутри ИИ (MCP, GPT, скилл) · для поиска
+- **Зачем нам:** повод подписаться · регистрации · заявки на агентские · вопрос к большому продукту
+- **Чем лучше, чем спросить ChatGPT:**
+- **Из чего собираем:**
+`;
+}
+function renderNewProd(fresh) {
+  if (!fresh && $('.drawer')) return;
+  S.drawn = 'new:product';
+  $('#drawer-root').innerHTML = `<div class="scrim" data-close></div>
+  <aside class="drawer" role="dialog" aria-label="Новая идея продукта">
+    <div class="dhead"><div class="row"><span class="kind">новый продукт</span><span class="spacer"></span><button class="iconbtn" data-close aria-label="Закрыть">${icon('x')}</button></div>
+      <h2>Идея продукта</h2></div>
+    <form class="dbody newprod" id="np">
+      <label><span class="section-l">Название</span><input class="field" id="np-title" required maxlength="120" placeholder="Например: разбор воронки по выгрузке из CRM"></label>
+      <label><span class="section-l">Суть одной строкой</span><textarea id="np-gist" rows="3" placeholder="Чья задача и что человек получает"></textarea></label>
+      <p class="hint">Карточка встанет на этап «Идея». Остальное — класс, зачем нам, порог — дописывается на этапе «Идея детально».</p>
+      <button class="btn primary" type="submit">${icon('plus')}Завести</button>
+    </form>
+  </aside>`;
+  icons();
+  $('#np-title').focus();
+  $('#np').onsubmit = async e => {
+    e.preventDefault();
+    const title = $('#np-title').value.replace(/\s+/g, ' ').trim();
+    if (!title) return;
+    const btn = $('#np button[type=submit]');
+    btn.disabled = true;
+    const num = Math.max(0, ...S.prods.map(p => Number((p.id.match(/PR-(\d+)/) || [])[1] || 0))) + 1;
+    const id = 'PR-' + String(num).padStart(3, '0');
+    const path = `${PROD_DIR}/${id} ${title.replace(/[\\/:*?"<>|#^[\]]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80)}.md`;
+    const text = prodTemplate(id, title, $('#np-gist').value.replace(/\s+/g, ' ').trim());
+    try {
+      const ver = await Store.create(path, text, `пульт: ${id} новый продукт`);
+      replaceFile({ path, text, ver });
+      render();
+      openDrawer(path);
+      toast(`${id} заведён: этап «Идея». Записано ${Store.label}`);
+    } catch (err) { btn.disabled = false; toast('Не завёлся: ' + err.message, { kind: 'err' }); }
+  };
+}
+
+/* карточка продукта: этапы, что на выходе, текст файла, порог и замер, комментарии; внизу — дальше, назад, нафиг */
+function prodDecideHtml(p) {
+  if (p.out) return `<div class="decide"><div class="dnow">${esc(`Нафиг с этапа «${PSTAGES[p.n - 1].name}»${p.why_not ? ': ' + p.why_not : ''}`)}</div>
+    <button class="btn ghost dundo" data-pback>${icon('undo-2')}Вернуть в воронку</button></div>`;
+  const next = PSTAGES[p.n];
+  const now = `${p.status === 'пауза' ? 'На паузе. ' : ''}Этап ${p.n} · ${PSTAGES[p.n - 1].name}. ${next ? `Дальше — «${next.name}»` : p.decision ? `Решение: ${p.decision}` : 'Замер против порога, потом решение'}`;
+  return `<div class="decide" id="decide">
+    <div class="dnow">${esc(now)}</div>
+    <div class="dbtns" id="p-btns">
+      <button class="dbtn no" data-pgo="no">${icon('x')}${p.n === 6 ? 'Закрыть' : 'Нафиг'}</button>
+      <button class="dbtn" data-pgo="back" ${p.n === 1 ? 'disabled' : ''}>${icon('arrow-left')}Назад</button>
+      ${next ? `<button class="dbtn yes" data-pgo="next">Дальше${icon('arrow-right')}</button>`
+        : `<button class="dbtn yes" data-pgo="keep" aria-pressed="${p.decision === 'развивать'}">${icon('check')}Развиваем</button>`}
+    </div>
+    <div class="dfix" id="p-no-box" hidden>
+      <textarea id="p-why" rows="3" placeholder="${p.n === 6 ? 'Почему закрываем: не взяли порог, не пользуются…' : 'Почему нафиг: ChatGPT справится сам, нет спроса, не наша задача…'}"></textarea>
+      <div class="dbtns two"><button class="dbtn" id="p-no-cancel">Отмена</button><button class="dbtn no" id="p-no-send">${icon('x')}${p.n === 6 ? 'Закрыть' : 'Нафиг'}</button></div>
+    </div>
+  </div>`;
+}
+function renderProdDrawer(p, fresh) {
+  const sig = p.text + '|' + JSON.stringify(marksOf(p));
+  if (!fresh && $('.drawer') && S.drawn === sig) return;
+  S.drawn = sig;
+  const prevScroll = fresh ? 0 : ($('.dbody')?.scrollTop || 0);
+  const st = PSTAGES[p.n - 1];
+  const ghUrl = `https://github.com/${GH_REPO.owner}/${GH_REPO.repo}/blob/${GH_REPO.branch}/${encPath(p.path)}`;
+  const path = `<ol class="path" aria-label="Этапы">${PSTAGES.map(x => `<li class="${x.n < p.n ? 'done' : x.n === p.n ? 'cur' : ''}">${x.n < p.n ? icon('check') : `<span class="pn">${x.n}</span>`}<span>${esc(x.name)}</span></li>`).join('')}</ol>`;
+  const measure = p.n >= 2 || p.threshold || p.fact || p.decision ? `<div class="fields pmeasure">
+      <span class="k">Порог</span><input class="field sm" id="p-threshold" value="${esc(p.threshold || '')}" placeholder="успех и отказ — цифрой и сроком">
+      ${p.n === 6 || p.fact ? `<span class="k">Факт</span><input class="field sm" id="p-fact" value="${esc(p.fact || '')}" placeholder="что намерили за 2–3 недели">` : ''}
+      ${p.n === 6 || p.decision ? `<span class="k">Решение</span><select class="sel" id="p-decision"><option value="">— ещё не решили</option>${DECISIONS.map(d => `<option ${d === p.decision ? 'selected' : ''}>${d}</option>`).join('')}</select>` : ''}
+    </div>` : '';
+  const meta = [['Заведена', p.created ? dShort(p.created) + ' ' + p.created.slice(0, 4) : '—'], ...(p.out ? [['Отсеяна', `${p.archived_on ? dShort(p.archived_on) + ' · ' : ''}с этапа «${st.name}»`]] : []), ['Файл', p.path]];
+  $('#drawer-root').innerHTML = `<div class="scrim" data-close></div>
+  <aside class="drawer" role="dialog" aria-label="${esc(p.id)}">
+    <div class="dhead"><div class="row"><span class="uid">${esc(p.id)}</span><span class="kind">продукт</span><span class="spacer"></span>
+      <a class="linkbtn obs" href="obsidian://open?path=${encodeURIComponent(S.root + '/' + p.path)}" title="Откроется на маке, где стоит Обсидиан">${icon('external-link')}Обсидиан</a>
+      ${MODE === 'gh' ? `<a class="linkbtn" href="${ghUrl}" target="_blank" rel="noopener" title="Файл в репозитории — там же правка текста">${icon('file-code')}GitHub</a>` : ''}
+      <button class="iconbtn" data-close aria-label="Закрыть">${icon('x')}</button></div>
+      <h2>${esc(p.title)}</h2></div>
+    <div class="dbody">
+      ${path}
+      <div class="note out">${icon(st.icon)}<span><b>На выходе этапа «${esc(st.name)}».</b> ${esc(st.out)}</span></div>
+      ${measure}
+      <div class="md">${mdToHtml(stripComments(p.body).replace(/^\s*# .*\n/, ''))}</div>
+      ${commentsHtml(p)}
+      <details class="more"><summary>Статус и файл</summary>
+        <div class="fields">
+          <span class="k">Статус</span><select class="sel" id="p-status">${PROD_STATUSES.map(x => `<option ${x === p.status ? 'selected' : ''}>${x}</option>`).join('')}${PROD_STATUSES.includes(p.status) ? '' : `<option selected disabled>${esc(p.status)}</option>`}</select>
+          ${meta.map(([k, v]) => `<span class="k">${esc(k)}</span><span>${esc(v)}</span>`).join('')}
+        </div>
+      </details>
+    </div>
+    ${prodDecideHtml(p)}${marksBarHtml(p)}
+  </aside>`;
+  icons();
+  fillImages($('#drawer-root'));
+  paintMarks(p);
+  const db = $('.dbody');
+  if (db) db.scrollTop = prevScroll;
+  const field = (id, k, name) => { const el = $(id); if (el) el.onchange = () => save(p, { [k]: el.value.trim() || null }, { label: `${p.id}: ${name} ${el.value.trim() ? 'записан' : 'снят'}. Записано ${Store.label}` }); };
+  field('#p-threshold', 'threshold', 'порог');
+  field('#p-fact', 'fact', 'факт');
+  const dec = $('#p-decision');
+  if (dec) dec.onchange = () => save(p, { decision: dec.value || null }, { label: `${p.id}: ${dec.value ? 'решение — ' + dec.value : 'решение снято'}. Записано ${Store.label}` });
+  $('#p-status').onchange = e => save(p, { status: e.target.value }, { label: `${p.id}: статус «${e.target.value}». Записано ${Store.label}` });
+  const ta = $('#d-cmt');
+  if (ta) {
+    ta.value = S.drafts[p.path] || '';
+    ta.oninput = () => { S.drafts[p.path] = ta.value; };
+    ta.onkeydown = e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); sendComment(p); } };
+    $('#d-cmt-send').onclick = () => sendComment(p);
+  }
+  const back = $('[data-pback]');
+  if (back) back.onclick = () => save(p, { status: 'в работе', why_not: null, archived: null, ...(p.decision === 'закрыть' ? { decision: null } : {}) }, { label: `${p.id}: снова в воронке, этап «${st.name}». Записано ${Store.label}` });
+  const box = $('#p-no-box');
+  if (!box) return;
+  const why = $('#p-why');
+  $$('#p-btns [data-pgo]').forEach(b => { b.onclick = () => {
+    const go = b.dataset.pgo;
+    if (go === 'next') save(p, { stage: pStageVal(p.n + 1) }, { label: `${p.id}: дальше — «${PSTAGES[p.n].name}». Записано ${Store.label}` });
+    else if (go === 'back') save(p, { stage: pStageVal(p.n - 1), ...(p.n === 6 && p.decision ? { decision: null } : {}) }, { label: `${p.id}: назад — «${PSTAGES[p.n - 2].name}». Записано ${Store.label}` });
+    else if (go === 'keep') save(p, { decision: p.decision === 'развивать' ? null : 'развивать' }, { label: `${p.id}: ${p.decision === 'развивать' ? 'решение снято' : 'развиваем'}. Записано ${Store.label}` });
+    else { S.fixOpen = p.path; $('#p-btns').hidden = true; box.hidden = false; why.value = S.drafts['why:' + p.path] || ''; why.focus(); }
+  }; });
+  if (S.fixOpen === p.path) { $('#p-btns').hidden = true; box.hidden = false; why.value = S.drafts['why:' + p.path] || ''; }
+  const send = () => {
+    const v = why.value.replace(/\s+/g, ' ').trim();
+    if (!v) { why.focus(); toast('Напиши причину одной строкой: через месяц без неё не вспомнить, почему отсеяли', { kind: 'warn' }); return; }
+    S.fixOpen = null; delete S.drafts['why:' + p.path];
+    save(p, { status: 'нафиг', why_not: v, archived: S.today, ...(p.n === 6 ? { decision: 'закрыть' } : {}) }, { label: `${p.id}: ${p.n === 6 ? 'закрыт' : 'нафиг'} с этапа «${st.name}». Записано ${Store.label}` });
+  };
+  why.oninput = () => { S.drafts['why:' + p.path] = why.value; };
+  why.onkeydown = e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send(); } };
+  $('#p-no-send').onclick = send;
+  $('#p-no-cancel').onclick = () => { S.fixOpen = null; box.hidden = true; $('#p-btns').hidden = false; };
+}
+
 /* ---------- вход по паролю (режим GitHub) ---------- */
 function renderLogin(msg) {
   closeDrawer();
@@ -1766,12 +2054,21 @@ document.addEventListener('mousemove', e => {
 });
 
 /* ---------- отрисовка ---------- */
+/* переключатель «Контент · Продукты»: у продуктов свой экран — воронка, вкладки контента спрятаны */
+function renderMode() {
+  const prod = S.mode === 'prod';
+  document.title = prod ? 'Пульт продуктов' : 'Пульт контента';
+  document.body.classList.toggle('mode-prod', prod);
+  $('#tabs').hidden = prod;
+  $$('#modes [data-mode]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.mode === S.mode)));
+}
 function render() {
+  renderMode();
   if (!S.loaded) return;
   const keep = {};
   $$('[data-scroll]').forEach(el => { keep[el.dataset.scroll] = el.scrollTop; });
   renderFilters();
-  const v = { ideas: renderIdeas, board: renderBoard, plan: renderPlan, forms: renderForms, stats: renderStats }[S.view] || renderIdeas;
+  const v = S.mode === 'prod' ? renderProds : { ideas: renderIdeas, board: renderBoard, plan: renderPlan, forms: renderForms, stats: renderStats }[S.view] || renderIdeas;
   $('#view').innerHTML = v();
   $$('[data-scroll]').forEach(el => { if (keep[el.dataset.scroll]) el.scrollTop = keep[el.dataset.scroll]; });
   icons();
@@ -1795,6 +2092,11 @@ document.addEventListener('click', e => {
     return;
   }
   if (t.closest('[data-close]')) { closeDrawer(); return; }
+  const md = t.closest('#modes [data-mode]');
+  if (md) { if (S.mode !== md.dataset.mode) { S.mode = md.dataset.mode; closeDrawer(); S.pick = S.pickVia = null; savePrefs(); render(); window.scrollTo(0, 0); } return; }
+  if (t.closest('[data-newprod]')) { openDrawer('new:product'); return; }
+  const pln = t.closest('[data-plane]');
+  if (pln) { $('#plane-' + pln.dataset.plane)?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'start' }); return; }
   const tab = t.closest('#tabs .tab');
   if (tab) { S.view = tab.dataset.view; S.pick = S.pickVia = null; savePrefs(); render(); window.scrollTo(0, 0); return; }
   /* библиотека форм и выбор формы для поста */
@@ -1878,6 +2180,8 @@ document.addEventListener('change', e => {
   if (e.target.id === 'mine') { S.f.mine = e.target.checked; savePrefs(); render(); }
   if (e.target.id === 'noposted') { S.f.noPosted = e.target.checked; savePrefs(); render(); }
   if (e.target.id === 'sort') { S.sort = e.target.value; savePrefs(); render(); }
+  if (e.target.id === 'p-out') { S.pf.out = e.target.checked; savePrefs(); render(); }
+  if (e.target.id === 'p-cmt') { S.pf.cmt = e.target.checked; savePrefs(); render(); }
 });
 let qTimer;
 $('#q').addEventListener('input', e => { clearTimeout(qTimer); qTimer = setTimeout(() => { S.q = e.target.value.trim(); render(); }, 150); });
@@ -1937,5 +2241,6 @@ document.addEventListener('drop', e => {
 window.addEventListener('focus', () => { if (S.loaded && !S.dragKey && Date.now() - S.lastLoad > (MODE === 'gh' ? 30000 : 4000)) load(); });
 
 loadPrefs();
+renderMode();
 if (MODE === 'gh') GH.restore();
 load();

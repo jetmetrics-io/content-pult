@@ -440,7 +440,7 @@ details.stage[open] summary { margin-bottom: 12px; }
 .filters:empty { display: none; }
 
 /* ---------- комментарии для Claude ---------- */
-.tag.cmt { background: var(--jm-yellow-tint); color: var(--jm-yellow-text); font-weight: 600; }
+.tag.cmt { background: var(--jm-yellow-tint); color: var(--jm-yellow-text); font-weight: 600; display: inline-flex; gap: 5px; padding: 0 8px; border-radius: var(--jm-r-pill); } /* .cmt — ещё и блок комментария в карточке: без этого значок становился сеткой и прятал число (до 28.10) */
 .toggle svg.lucide { width: 14px; height: 14px; color: var(--jm-yellow-text); }
 .toggle .c { font-family: var(--jm-font-mono); font-size: 11px; color: var(--jm-faint); }
 .cmts { display: grid; gap: 10px; }
@@ -513,3 +513,26 @@ details.stage[open] summary { margin-bottom: 12px; }
 .path li.cur.me { border-color: var(--jm-yellow-text); background: var(--jm-yellow-tint); color: var(--jm-yellow-text); }
 .path li .pw { font-weight: 500; opacity: .85; }
 .dundo { justify-self: center; }
+
+/* ---------- пульт продуктов (28.10.2026): переключатель в шапке, воронка, карточка ---------- */
+.modes { flex: none; }
+.modes button { white-space: nowrap; }
+.mini.paused { opacity: .62; }
+.note.out { background: var(--jm-green-tint-soft); line-height: 1.45; }
+.dbody .note.out { margin: 0; }
+.note.out svg.lucide { color: var(--jm-green-deep); }
+.field.sm { height: 34px; padding: 0 10px; border: var(--jm-border); border-radius: var(--jm-r-sm); background: var(--jm-surface); font-size: 13.5px; outline: none; width: 100%; }
+.field.sm:focus, .newprod .field:focus, .newprod textarea:focus { box-shadow: var(--jm-ring); border-color: var(--jm-green); }
+.newprod label { display: grid; gap: 0; }
+.newprod .field { height: 44px; padding: 0 12px; border: var(--jm-border); border-radius: var(--jm-r-md); background: var(--jm-surface); font-size: 16px; outline: none; }
+.newprod textarea { width: 100%; font: inherit; font-size: 16px; line-height: 1.45; padding: 10px 12px; border: var(--jm-border); border-radius: var(--jm-r-md); background: var(--jm-surface); resize: vertical; outline: none; }
+.newprod .hint { margin: 0; font-size: 13px; line-height: 1.45; color: var(--jm-muted); }
+.newprod .btn.primary { justify-content: center; height: 44px; }
+.dbtn:disabled { opacity: .4; cursor: default; }
+@media (max-width: 760px) {
+  body.mode-prod { --top-h: 60px; } /* у продуктов вкладок нет: верх в одну строку */
+  .pmeasure { grid-template-columns: 76px minmax(0, 1fr); }
+  #p-btns .dbtn { font-size: 15px; gap: 5px; padding: 0 4px; }
+  #p-btns .dbtn svg.lucide { width: 18px; height: 18px; }
+  .modes button { padding: 0 9px; }
+}

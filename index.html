@@ -16,12 +16,17 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="tokens.css?v=20261023200753">
-<link rel="stylesheet" href="app.css?v=20261023200753">
+<link rel="stylesheet" href="tokens.css?v=20261028225529">
+<link rel="stylesheet" href="app.css?v=20261028225529">
 </head>
 <body class="jm-base">
 <header class="top">
-  <div class="brand"><span class="dot"></span>Пульт контента</div>
+  <div class="brand"><span class="dot"></span>Пульт</div>
+  <!-- переключатель «Контент · Продукты» (28.10.2026): у продуктов — воронка от идеи до воркспейса -->
+  <div class="seg modes" id="modes" role="group" aria-label="Что ведём">
+    <button data-mode="content" aria-pressed="true">Контент</button>
+    <button data-mode="prod" aria-pressed="false">Продукты</button>
+  </div>
   <nav class="tabs" role="tablist" id="tabs">
     <button class="tab" role="tab" data-view="ideas"><i data-lucide="lightbulb"></i>Идеи</button>
     <button class="tab" role="tab" data-view="board"><i data-lucide="square-kanban"></i>Конвейер</button>
@@ -43,6 +48,6 @@
 <div id="tip" hidden></div>
 <script src="lucide.min.js"></script>
 <script src="marked.min.js"></script>
-<script src="app.js?v=20261023200753"></script>
+<script src="app.js?v=20261028225529"></script>
 </body>
 </html>
