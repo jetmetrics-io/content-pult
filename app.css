@@ -518,6 +518,9 @@ details.stage[open] summary { margin-bottom: 12px; }
 .modes { flex: none; }
 .modes button { white-space: nowrap; }
 .mini.paused { opacity: .62; }
+.mini .row.lv { gap: 5px; }
+.mini .row.lv .tag { height: 20px; padding: 0 7px; gap: 4px; }
+.pmeasure > select { justify-self: start; min-width: 180px; }
 .note.out { background: var(--jm-green-tint-soft); line-height: 1.45; }
 .dbody .note.out { margin: 0; }
 .note.out svg.lucide { color: var(--jm-green-deep); }

@@ -76,7 +76,7 @@ const CONV_REQ = '_pult/conveyor_request.json', CONV_STATE = '_pult/conveyor_sta
    Этапы — слова Дмитрия; что на выходе — по Content System/SYSTEM.md. Отсеянное: status: нафиг + why_not, этап остаётся тем, где отсеяли */
 const PROD_DIR = 'products';
 const PSTAGES = [
-  { n: 1, name: 'Идея', icon: 'lightbulb', out: 'Одна строка: чья задача и что человек получает.' },
+  { n: 1, name: 'Идея', icon: 'lightbulb', out: 'Суть одной строкой, JTBD, с чем конкурирует, сложность реализации и стоимость поддержки.' },
   { n: 2, name: 'Идея детально', icon: 'notebook-pen', out: 'Класс, зачем нам, чем лучше, чем спросить ChatGPT, из чего собираем. Порог успеха и порог отказа — цифрой и сроком.' },
   { n: 3, name: 'Прототип-демка', icon: 'drafting-compass', out: 'Демка, которую можно потрогать или показать роликом.' },
   { n: 4, name: 'Лендинг', icon: 'layout-template', out: 'Упаковка: УТП и ценности на двух языках, кнопка «хочу».' },
@@ -85,6 +85,10 @@ const PSTAGES = [
 ];
 const PROD_STATUSES = ['в работе', 'пауза', 'нафиг'];
 const DECISIONS = ['развивать', 'закрыть'];
+/* у каждой идеи продукта — сложность реализации и стоимость поддержки (Дмитрий 28.10: «в отличие от идей постов»); JTBD и конкуренты — текстом в файле */
+const LEVELS = ['низкая', 'средняя', 'высокая'];
+const LEVEL_TAG = { 'низкая': 'green', 'средняя': '', 'высокая': 'coral' };
+const LEVEL_SHORT = { 'низкая': 'низк.', 'средняя': 'сред.', 'высокая': 'выс.' };
 const pStageVal = n => `${n} ${PSTAGES[n - 1].name.toLowerCase()}`;
 const PREF_KEY = 'pult:prefs:v2';
 const MARKS_KEY = 'pult:marks:v1'; // неотправленные замечания к месту в тексте — только в этом браузере
@@ -365,6 +369,7 @@ function buildProduct(file) {
     n: PSTAGES[n - 1] ? n : 1, out: status === 'нафиг',
     created: asDate(fields.created), archived_on: asDate(fields.archived),
     threshold: str('threshold'), fact: str('fact'), decision: str('decision'), why_not: str('why_not'),
+    effort: str('effort'), upkeep: str('upkeep'),
     preview: ((clean.match(/\*\*Суть[.:]\*\*\s*(.+)/) || [])[1] || '').replace(/\*\*|__|`/g, '').trim() || firstText(clean),
     comments: parseComments(body),
   };
@@ -642,6 +647,7 @@ function validate(u, fields) {
     if (k === 'stage' && u.kind === 'product' && !/^[1-6] \S/.test(v)) throw new Error('этап продукта — от 1 до 6');
     if (k === 'stage' && u.kind !== 'product' && !/^[2-6] \S/.test(v)) throw new Error('этап — от 2 до 6');
     if (k === 'decision' && !DECISIONS.includes(v)) throw new Error('решение — развивать или закрыть');
+    if ((k === 'effort' || k === 'upkeep') && !LEVELS.includes(v)) throw new Error('уровень — низкая, средняя или высокая');
     if (k === 'turn' && !['claude', 'дмитрий'].includes(v)) throw new Error('ход — claude или дмитрий');
     if (k === 'my_score') { v = Number(v); if (!(v >= 1 && v <= 5)) throw new Error('оценка — от 1 до 5'); }
     if (k === 'my_elo' || k === 'my_duels') { v = Math.round(Number(v)); if (!(v >= 0)) throw new Error(`${k}: нужно число`); }
@@ -657,6 +663,7 @@ function commitMessage(u, fields) {
     pillar: `пиллар ${normPillar(v) || 'снят'}`, my_elo: 'дуэль', format_pick: v ? `форма ${v}` : 'форма снята',
     stage: v ? `этап → ${v}` : null, published_date: v ? `вышел ${v}` : 'дата выхода снята',
     threshold: 'порог', fact: 'факт', decision: v ? `решение: ${v}` : 'решение снято',
+    effort: `сложность: ${v || '—'}`, upkeep: `поддержка: ${v || '—'}`,
   })[k] || (k.startsWith('published_') && CH.find(c => k === 'published_' + c.k) ? `${CH.find(c => k === 'published_' + c.k).name} ${v ? 'да' : 'нет'}` : null)
     || (STAT_KEYS.includes(k) ? `${k} ${v ?? '—'}` : null)).filter(Boolean);
   return `пульт: ${u.id} ${parts.join(', ')}`;
@@ -1805,10 +1812,11 @@ function prodMini(p, note = '') {
   const t = [];
   if (p.status === 'пауза') t.push(`<span class="tag">${icon('pause')}пауза</span>`);
   if (p.decision) t.push(`<span class="tag ${p.decision === 'развивать' ? 'green' : 'coral'}">${esc(p.decision)}</span>`);
+  const lv = (k, ic, name) => (LEVELS.includes(p[k]) ? `<span class="tag ${LEVEL_TAG[p[k]]}" title="${name}: ${p[k]}">${icon(ic)}${LEVEL_SHORT[p[k]]}</span>` : '');
   if (p.cmtOpen) t.push(`<span class="tag cmt" title="Комментарии, которые Claude ещё не учёл">${icon('message-circle')}${p.cmtOpen}</span>`);
   return `<div class="mini static${p.status === 'пауза' ? ' paused' : ''}" data-open="${esc(p.path)}">
     <div class="row"><span class="uid">${esc(p.id)}</span><span class="r">${t.join('')}</span></div>
-    <div class="t">${esc(p.title)}</div>${note ? `<div class="mnote">${esc(note)}</div>` : ''}
+    <div class="t">${esc(p.title)}</div>${p.effort || p.upkeep ? `<div class="row lv">${lv('effort', 'hammer', 'Сложность реализации')}${lv('upkeep', 'wrench', 'Стоимость поддержки')}</div>` : ''}${note ? `<div class="mnote">${esc(note)}</div>` : ''}
   </div>`;
 }
 function renderProds() {
@@ -1845,6 +1853,8 @@ title: ${FM.format(title)}
 stage: ${pStageVal(1)}
 status: в работе
 created: ${S.today}
+effort:
+upkeep:
 threshold:
 fact:
 decision:
@@ -1853,6 +1863,14 @@ decision:
 # ${id} ${title}
 
 **Суть.** ${gist || 'Чья задача и что человек получает.'}
+
+**JTBD.** Когда …, хочу …, чтобы …
+
+**С чем конкурирует.** Сервисы и продукты: … · Люди: аналитик в штате, фрилансер, агентство… · Руками: Excel, спросить ChatGPT, ничего не делать…
+
+**Сложность реализации.** Почему такая: …
+
+**Стоимость поддержки.** Что съедает после запуска: …
 
 ## Детально
 
@@ -1872,7 +1890,8 @@ function renderNewProd(fresh) {
     <form class="dbody newprod" id="np">
       <label><span class="section-l">Название</span><input class="field" id="np-title" required maxlength="120" placeholder="Например: разбор воронки по выгрузке из CRM"></label>
       <label><span class="section-l">Суть одной строкой</span><textarea id="np-gist" rows="3" placeholder="Чья задача и что человек получает"></textarea></label>
-      <p class="hint">Карточка встанет на этап «Идея». Остальное — класс, зачем нам, порог — дописывается на этапе «Идея детально».</p>
+      <label class="toggle"><input type="checkbox" id="np-ask" checked>Попросить Claude расписать JTBD, конкурентов, сложность и поддержку</label>
+      <p class="hint">Карточка встанет на этап «Идея». Галочка оставит в карточке комментарий для Claude. Класс, зачем нам и порог — на этапе «Идея детально».</p>
       <button class="btn primary" type="submit">${icon('plus')}Завести</button>
     </form>
   </aside>`;
@@ -1887,7 +1906,8 @@ function renderNewProd(fresh) {
     const num = Math.max(0, ...S.prods.map(p => Number((p.id.match(/PR-(\d+)/) || [])[1] || 0))) + 1;
     const id = 'PR-' + String(num).padStart(3, '0');
     const path = `${PROD_DIR}/${id} ${title.replace(/[\\/:*?"<>|#^[\]]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80)}.md`;
-    const text = prodTemplate(id, title, $('#np-gist').value.replace(/\s+/g, ' ').trim());
+    let text = prodTemplate(id, title, $('#np-gist').value.replace(/\s+/g, ' ').trim());
+    if ($('#np-ask').checked) text = addComment(text, 'Распиши поля идеи: JTBD, с чем конкурирует, сложность реализации, стоимость поддержки', stampNow()).text;
     try {
       const ver = await Store.create(path, text, `пульт: ${id} новый продукт`);
       replaceFile({ path, text, ver });
@@ -1926,11 +1946,14 @@ function renderProdDrawer(p, fresh) {
   const st = PSTAGES[p.n - 1];
   const ghUrl = `https://github.com/${GH_REPO.owner}/${GH_REPO.repo}/blob/${GH_REPO.branch}/${encPath(p.path)}`;
   const path = `<ol class="path" aria-label="Этапы">${PSTAGES.map(x => `<li class="${x.n < p.n ? 'done' : x.n === p.n ? 'cur' : ''}">${x.n < p.n ? icon('check') : `<span class="pn">${x.n}</span>`}<span>${esc(x.name)}</span></li>`).join('')}</ol>`;
-  const measure = p.n >= 2 || p.threshold || p.fact || p.decision ? `<div class="fields pmeasure">
-      <span class="k">Порог</span><input class="field sm" id="p-threshold" value="${esc(p.threshold || '')}" placeholder="успех и отказ — цифрой и сроком">
+  const lvSel = (id, v) => `<select class="sel" id="${id}"><option value="">— не оценена</option>${LEVELS.map(x => `<option ${x === v ? 'selected' : ''}>${x}</option>`).join('')}</select>`;
+  const measure = `<div class="fields pmeasure">
+      <span class="k">Сложность</span>${lvSel('p-effort', p.effort)}
+      <span class="k">Поддержка</span>${lvSel('p-upkeep', p.upkeep)}
+      ${p.n >= 2 || p.threshold ? `<span class="k">Порог</span><input class="field sm" id="p-threshold" value="${esc(p.threshold || '')}" placeholder="успех и отказ — цифрой и сроком">` : ''}
       ${p.n === 6 || p.fact ? `<span class="k">Факт</span><input class="field sm" id="p-fact" value="${esc(p.fact || '')}" placeholder="что намерили за 2–3 недели">` : ''}
       ${p.n === 6 || p.decision ? `<span class="k">Решение</span><select class="sel" id="p-decision"><option value="">— ещё не решили</option>${DECISIONS.map(d => `<option ${d === p.decision ? 'selected' : ''}>${d}</option>`).join('')}</select>` : ''}
-    </div>` : '';
+    </div>`;
   const meta = [['Заведена', p.created ? dShort(p.created) + ' ' + p.created.slice(0, 4) : '—'], ...(p.out ? [['Отсеяна', `${p.archived_on ? dShort(p.archived_on) + ' · ' : ''}с этапа «${st.name}»`]] : []), ['Файл', p.path]];
   $('#drawer-root').innerHTML = `<div class="scrim" data-close></div>
   <aside class="drawer" role="dialog" aria-label="${esc(p.id)}">
@@ -1962,6 +1985,7 @@ function renderProdDrawer(p, fresh) {
   const field = (id, k, name) => { const el = $(id); if (el) el.onchange = () => save(p, { [k]: el.value.trim() || null }, { label: `${p.id}: ${name} ${el.value.trim() ? 'записан' : 'снят'}. Записано ${Store.label}` }); };
   field('#p-threshold', 'threshold', 'порог');
   field('#p-fact', 'fact', 'факт');
+  [['#p-effort', 'effort', 'сложность'], ['#p-upkeep', 'upkeep', 'поддержка']].forEach(([id, k, name]) => { const el = $(id); el.onchange = () => save(p, { [k]: el.value || null }, { label: `${p.id}: ${name} — ${el.value || 'не оценена'}. Записано ${Store.label}` }); });
   const dec = $('#p-decision');
   if (dec) dec.onchange = () => save(p, { decision: dec.value || null }, { label: `${p.id}: ${dec.value ? 'решение — ' + dec.value : 'решение снято'}. Записано ${Store.label}` });
   $('#p-status').onchange = e => save(p, { status: e.target.value }, { label: `${p.id}: статус «${e.target.value}». Записано ${Store.label}` });
