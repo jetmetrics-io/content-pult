@@ -1819,10 +1819,10 @@ function prodMini(p, note = '') {
     <div class="t">${esc(p.title)}</div>${p.effort || p.upkeep ? `<div class="row lv">${lv('effort', 'hammer', 'Сложность реализации')}${lv('upkeep', 'wrench', 'Стоимость поддержки')}</div>` : ''}${note ? `<div class="mnote">${esc(note)}</div>` : ''}
   </div>`;
 }
+const prodOrder = (a, b) => (a.status === 'пауза') - (b.status === 'пауза') || (a.id < b.id ? -1 : 1);
 function renderProds() {
   const list = S.prods.filter(prodPass);
-  const byId = (a, b) => (a.status === 'пауза') - (b.status === 'пауза') || (a.id < b.id ? -1 : 1);
-  const cols = PSTAGES.map(s => ({ ...s, items: list.filter(p => !p.out && p.n === s.n).sort(byId) }));
+  const cols = PSTAGES.map(s => ({ ...s, items: list.filter(p => !p.out && p.n === s.n).sort(prodOrder) }));
   if (S.pf.out) cols.push({ n: 'out', name: 'Нафиг', icon: 'ban', items: list.filter(p => p.out).sort((a, b) => String(b.archived_on || '').localeCompare(String(a.archived_on || '')) || (a.id < b.id ? 1 : -1)) });
   const strip = cols.filter(c => c.n !== 'out').map(c => `<button class="ls${c.items.length ? '' : ' zero'}" data-plane="${c.n}"><span class="ls-n">${c.n}</span>${esc(c.name)}<b>${c.items.length}</b></button>`).join(`<span class="ls-arr">${icon('chevron-right')}</span>`);
   const note = p => (p.out ? `с этапа «${PSTAGES[p.n - 1].name}»${p.why_not ? ': ' + p.why_not : ''}`
@@ -1922,19 +1922,25 @@ function renderNewProd(fresh) {
 function prodDecideHtml(p) {
   if (p.out) return `<div class="decide"><div class="dnow">${esc(`Нафиг с этапа «${PSTAGES[p.n - 1].name}»${p.why_not ? ': ' + p.why_not : ''}`)}</div>
     <button class="btn ghost dundo" data-pback>${icon('undo-2')}Вернуть в воронку</button></div>`;
-  const next = PSTAGES[p.n];
-  const now = `${p.status === 'пауза' ? 'На паузе. ' : ''}Этап ${p.n} · ${PSTAGES[p.n - 1].name}. ${next ? `Дальше — «${next.name}»` : p.decision ? `Решение: ${p.decision}` : 'Замер против порога, потом решение'}`;
+  const next = PSTAGES[p.n], prev = PSTAGES[p.n - 2];
+  const now = `${p.status === 'пауза' ? 'На паузе. ' : ''}Этап ${p.n} · ${PSTAGES[p.n - 1].name}. ${next ? `Дальше — «${next.name}»` : p.decision ? `Решение: ${p.decision}` : 'Замер против порога, потом решение'}${p.cmtOpen ? ' · ждёт доработки Claude' : ''}`;
+  // три решения, как в отборе идей (Дмитрий, 28.10.2026: «и третий вариант – доработать»); «Назад» — поправка, не решение
   return `<div class="decide" id="decide">
     <div class="dnow">${esc(now)}</div>
     <div class="dbtns" id="p-btns">
       <button class="dbtn no" data-pgo="no">${icon('x')}${p.n === 6 ? 'Закрыть' : 'Нафиг'}</button>
-      <button class="dbtn" data-pgo="back" ${p.n === 1 ? 'disabled' : ''}>${icon('arrow-left')}Назад</button>
+      <button class="dbtn fix" data-pgo="fix" aria-pressed="${p.cmtOpen > 0}">${icon('pencil')}Доработать</button>
       ${next ? `<button class="dbtn yes" data-pgo="next">Дальше${icon('arrow-right')}</button>`
         : `<button class="dbtn yes" data-pgo="keep" aria-pressed="${p.decision === 'развивать'}">${icon('check')}Развиваем</button>`}
     </div>
+    ${prev ? `<button class="btn ghost dundo" id="p-back">${icon('arrow-left')}Назад на «${esc(prev.name)}»</button>` : ''}
     <div class="dfix" id="p-no-box" hidden>
       <textarea id="p-why" rows="3" placeholder="${p.n === 6 ? 'Почему закрываем: не взяли порог, не пользуются…' : 'Почему нафиг: ChatGPT справится сам, нет спроса, не наша задача…'}"></textarea>
       <div class="dbtns two"><button class="dbtn" id="p-no-cancel">Отмена</button><button class="dbtn no" id="p-no-send">${icon('x')}${p.n === 6 ? 'Закрыть' : 'Нафиг'}</button></div>
+    </div>
+    <div class="dfix" id="p-fix-box" hidden>
+      <textarea id="p-fix" rows="3" placeholder="Что доработать: уже аудитория, поискать конкурентов в RU, соединить с другой идеей…"></textarea>
+      <div class="dbtns two"><button class="dbtn" id="p-fix-cancel">Отмена</button><button class="dbtn yes" id="p-fix-send">${icon('send')}Отправить</button></div>
     </div>
   </div>`;
 }
@@ -2000,25 +2006,57 @@ function renderProdDrawer(p, fresh) {
   if (back) back.onclick = () => save(p, { status: 'в работе', why_not: null, archived: null, ...(p.decision === 'закрыть' ? { decision: null } : {}) }, { label: `${p.id}: снова в воронке, этап «${st.name}». Записано ${Store.label}` });
   const box = $('#p-no-box');
   if (!box) return;
-  const why = $('#p-why');
+  const why = $('#p-why'), fbox = $('#p-fix-box'), fix = $('#p-fix'), pback = $('#p-back');
+  // открытое поле переживает перерисовку: S.fixOpen = 'why:' или 'fix:' + путь; черновик «доработать» общий с полем комментария, как у идей
+  const draftKey = k => (k === 'why:' ? 'why:' + p.path : p.path);
+  const show = (k, focus) => {
+    const [b, ta] = k === 'why:' ? [box, why] : [fbox, fix];
+    S.fixOpen = k + p.path; $('#p-btns').hidden = true; if (pback) pback.hidden = true;
+    b.hidden = false; ta.value = S.drafts[draftKey(k)] || ''; if (focus) ta.focus();
+  };
+  const hide = () => { S.fixOpen = null; box.hidden = fbox.hidden = true; $('#p-btns').hidden = false; if (pback) pback.hidden = false; };
   $$('#p-btns [data-pgo]').forEach(b => { b.onclick = () => {
     const go = b.dataset.pgo;
-    if (go === 'next') save(p, { stage: pStageVal(p.n + 1) }, { label: `${p.id}: дальше — «${PSTAGES[p.n].name}». Записано ${Store.label}` });
-    else if (go === 'back') save(p, { stage: pStageVal(p.n - 1), ...(p.n === 6 && p.decision ? { decision: null } : {}) }, { label: `${p.id}: назад — «${PSTAGES[p.n - 2].name}». Записано ${Store.label}` });
-    else if (go === 'keep') save(p, { decision: p.decision === 'развивать' ? null : 'развивать' }, { label: `${p.id}: ${p.decision === 'развивать' ? 'решение снято' : 'развиваем'}. Записано ${Store.label}` });
-    else { S.fixOpen = p.path; $('#p-btns').hidden = true; box.hidden = false; why.value = S.drafts['why:' + p.path] || ''; why.focus(); }
+    if (go === 'next') {
+      save(p, { stage: pStageVal(p.n + 1) }, { label: `${p.id}: дальше — «${PSTAGES[p.n].name}». Записано ${Store.label}` });
+      prodNext(p.path, p.n);
+    } else if (go === 'keep') save(p, { decision: p.decision === 'развивать' ? null : 'развивать' }, { label: `${p.id}: ${p.decision === 'развивать' ? 'решение снято' : 'развиваем'}. Записано ${Store.label}` });
+    else show(go === 'fix' ? 'fix:' : 'why:', true);
   }; });
-  if (S.fixOpen === p.path) { $('#p-btns').hidden = true; box.hidden = false; why.value = S.drafts['why:' + p.path] || ''; }
+  if (pback) pback.onclick = () => save(p, { stage: pStageVal(p.n - 1), ...(p.n === 6 && p.decision ? { decision: null } : {}) }, { label: `${p.id}: назад — «${PSTAGES[p.n - 2].name}». Записано ${Store.label}` });
+  if (S.fixOpen === 'why:' + p.path) show('why:');
+  else if (S.fixOpen === 'fix:' + p.path) show('fix:');
   const send = () => {
     const v = why.value.replace(/\s+/g, ' ').trim();
     if (!v) { why.focus(); toast('Напиши причину одной строкой: через месяц без неё не вспомнить, почему отсеяли', { kind: 'warn' }); return; }
     S.fixOpen = null; delete S.drafts['why:' + p.path];
     save(p, { status: 'нафиг', why_not: v, archived: S.today, ...(p.n === 6 ? { decision: 'закрыть' } : {}) }, { label: `${p.id}: ${p.n === 6 ? 'закрыт' : 'нафиг'} с этапа «${st.name}». Записано ${Store.label}` });
+    prodNext(p.path, p.n);
+  };
+  // «Доработать» — комментарий для Claude, этап не меняется; карточка ждёт его ответа (значок комментария на доске)
+  const sendFix = () => {
+    const v = fix.value.trim();
+    if (!v && !marksOf(p).length) { fix.focus(); toast('Напиши, что доработать: без этого Claude не поймёт, что поправить', { kind: 'warn' }); return; }
+    S.drafts[p.path] = v; S.fixOpen = null;
+    sendComment(p, v);
+    prodNext(p.path, p.n);
   };
   why.oninput = () => { S.drafts['why:' + p.path] = why.value; };
+  fix.oninput = () => { S.drafts[p.path] = fix.value; };
   why.onkeydown = e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send(); } };
+  fix.onkeydown = e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); sendFix(); } };
   $('#p-no-send').onclick = send;
-  $('#p-no-cancel').onclick = () => { S.fixOpen = null; box.hidden = true; $('#p-btns').hidden = false; };
+  $('#p-fix-send').onclick = sendFix;
+  $('#p-no-cancel').onclick = hide;
+  $('#p-fix-cancel').onclick = hide;
+}
+/* после решения открывается следующая карточка того же этапа, которая ещё ждёт решения (не ждёт Claude), — как в отборе идей */
+function prodNext(path, n) {
+  const list = S.prods.filter(x => !x.out && x.n === n && prodPass(x)).sort(prodOrder);
+  const i = list.findIndex(x => x.path === path);
+  const next = [...list.slice(i + 1), ...list.slice(0, Math.max(i, 0))].find(x => x.path !== path && !x.cmtOpen);
+  if (next) openDrawer(next.path);
+  else { closeDrawer(); toast(`На этапе «${PSTAGES[n - 1].name}» решения больше ничего не ждёт`); }
 }
 
 /* ---------- вход по паролю (режим GitHub) ---------- */
