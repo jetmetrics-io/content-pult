@@ -327,6 +327,7 @@ function buildUnit(file) {
     // этап 3: варианты формы от Codex (первый — рекомендованный) и выбор Дмитрия
     form_options: (Array.isArray(fields.form_options) ? fields.form_options : String(fields.form_options || '').split(/[,\s]+/)).map(formId).filter(Boolean),
     format_pick: formId(fields.format_pick),
+    custom_format: fields.custom_format ? String(fields.custom_format).trim() : null,
     comments: parseComments(body),
   };
   u.cmtOpen = u.comments.filter(c => !c.done).length;
@@ -1035,6 +1036,7 @@ function stagedBodyHtml(u, body) {
 function formBlockHtml(u) {
   const live = u.kind === 'post' && !u.archived && u.stage !== 'опубликован';
   if (!u.form_options.length && !u.format_pick && !live) return '';
+  if (u.custom_format) return `<div class="fblock"><p class="section-l">Форма картинки · авторская</p><p>${esc(u.custom_format)}</p><p class="hint">Разовая композиция для этого поста, вне библиотеки форм.</p></div>`;
   if (!S.forms && !S.formsErr) loadForms();
   const ids = [...u.form_options];
   if (u.format_pick && !ids.includes(u.format_pick)) ids.unshift(u.format_pick);
@@ -1634,7 +1636,7 @@ function openNext(path) {
 }
 function decidePost(u, how) {
   if (how === 'yes') {
-    if (u.step === FORM_STEP && !u.format_pick) { toast('Сначала выбери форму: «Эту» под плиткой или из библиотеки', { kind: 'warn' }); $('.fblock')?.scrollIntoView({ behavior: 'smooth' }); return; }
+    if (u.step === FORM_STEP && !u.format_pick && !u.custom_format) { toast('Сначала выбери форму: «Эту» под плиткой или из библиотеки', { kind: 'warn' }); $('.fblock')?.scrollIntoView({ behavior: 'smooth' }); return; }
     openNext(u.path);
     save(u, { stage: stepVal(u.step + 1), turn: 'claude' }, { label: `${u.id}: берём, дальше «${STEPS[u.step + 1]}». Записано ${Store.label}` });
     return;
@@ -1677,9 +1679,10 @@ function postDecideHtml(u) {
         : `Ход Codex: ${DOING[u.step]}. От тебя ничего: когда будет готово, пост появится в «Ждут тебя». ${RUN}`;
     return `<div class="decide"><div class="dnow">${esc(why)}</div></div>`;
   }
-  const yes = u.step === FORM_STEP && u.format_pick ? `Берём ${u.format_pick}` : 'Берём';
+  const yes = u.step === FORM_STEP && u.custom_format && !u.format_pick ? 'Берём авторскую форму' : u.step === FORM_STEP && u.format_pick ? `Берём ${u.format_pick}` : 'Берём';
+  const ask = u.step === FORM_STEP && u.custom_format ? 'Проверь авторскую композицию и нажми ✓' : ASK[u.step];
   return `<div class="decide" id="decide">
-    <div class="dnow">${esc(ASK[u.step])}${u.step === FORM_STEP && !u.format_pick ? ' · форма ещё не выбрана' : ''}. После ✓ — ${esc(AFTER_YES[u.step])}.</div>
+    <div class="dnow">${esc(ask)}${u.step === FORM_STEP && !u.format_pick && !u.custom_format ? ' · форма ещё не выбрана' : ''}. После ✓ — ${esc(AFTER_YES[u.step])}.</div>
     <div class="dbtns" id="d-btns">
       <button class="dbtn no" data-decide="no">${icon('x')}Нафиг</button>
       <button class="dbtn fix" data-decide="fix">${icon('pencil')}Доработать${marksOf(u).length ? ` · ${marksOf(u).length}` : ''}</button>
@@ -1786,7 +1789,7 @@ function renderDrawer(fresh = false) {
     $$('#d-btns [data-decide]').forEach(b => { b.onclick = () => {
       if (b.dataset.decide !== 'fix') {
         // неотправленные замечания уходят вместе с решением; «Берём» без формы — не решение, замечания ждут
-        const blocked = u.kind === 'post' && b.dataset.decide === 'yes' && u.step === FORM_STEP && !u.format_pick;
+        const blocked = u.kind === 'post' && b.dataset.decide === 'yes' && u.step === FORM_STEP && !u.format_pick && !u.custom_format;
         if (!blocked && marksOf(u).length) sendComment(u, '');
         if (u.kind === 'post') decidePost(u, b.dataset.decide); else decide(u, b.dataset.decide);
         return;
