@@ -64,13 +64,13 @@ const LANES = [
   { n: 7, name: 'Вышло', icon: 'megaphone' },
 ];
 const NO_LANE = { n: 0, name: 'Без этапа', icon: 'circle-help' };
-const WHO = { me: 'Ждут тебя', claude: 'У Claude', park: 'Отложены' };
-const whoName = l => (l.who === 'me' ? (l.n === TEXT_STEP ? 'пишешь ты' : 'ждёт тебя') : l.who === 'claude' ? 'у Claude' : l.who === 'park' ? 'отложена' : '');
-/* что делает Claude на этапе, что просим у Дмитрия и что будет после ✓ — для строки над кнопками (22.10.2026) */
+const WHO = { me: 'Ждут тебя', claude: 'У Codex', park: 'Отложены' };
+const whoName = l => (l.who === 'me' ? (l.n === TEXT_STEP ? 'пишешь ты' : 'ждёт тебя') : l.who === 'claude' ? 'у Codex' : l.who === 'park' ? 'отложена' : '');
+/* что делает Codex на этапе, что просим у Дмитрия и что будет после ✓ — для строки над кнопками (22.10.2026) */
 const DOING = { 2: 'пишет детали с 2–3 вариантами формы', 3: 'собирает прототип: все строки с числами и раскладку словами', 4: 'собирает картинку в Figma', 5: 'пишет фактуру для текста и делает EN-копию картинки' };
 const ASK = { 2: 'Прочитай детали, выбери форму и нажми ✓', 3: 'Проверь прототип: строки, числа, раскладку', 4: 'Доведи картинку и нажми ✓', 5: 'Проверь фактуру' };
-const AFTER_YES = { 2: 'Claude соберёт прототип', 3: 'Claude соберёт картинку в Figma', 4: 'Claude напишет фактуру и сделает EN-копию', 5: 'текст пишешь ты: RU, потом EN' };
-const RUN = 'Claude двигает карточки, когда ты нажимаешь «Двигай» вверху пульта или пишешь ему «двигай конвейер».';
+const AFTER_YES = { 2: 'Codex соберёт прототип', 3: 'Codex соберёт картинку в Figma', 4: 'Codex напишет фактуру и сделает EN-копию', 5: 'текст пишешь ты: RU, потом EN' };
+const RUN = 'Codex двигает карточки, когда ты нажимаешь «Двигай» вверху пульта или пишешь ему «двигай конвейер».';
 const CONV_REQ = '_pult/conveyor_request.json', CONV_STATE = '_pult/conveyor_state.json'; // кнопка «Двигай» (23.10.2026)
 /* пульт продуктов (28.10.2026): воронка от идеи до воркспейса, карточка — products/PR-NNN ….md.
    Этапы — слова Дмитрия; что на выходе — по Content System/SYSTEM.md. Отсеянное: status: нафиг + why_not, этап остаётся тем, где отсеяли */
@@ -235,11 +235,11 @@ function firstText(body, limit = 420) {
 }
 const ideaStage = st => ({ 'новая': 'идея', 'в работе': 'в работе', 'отложена': 'парковка', 'отклонена': 'отклонено', 'стала постом': 'опубликован' })[st] || 'идея';
 
-/* ---------- комментарии Дмитрия для Claude: раздел в конце заметки, галочка = Claude учёл ----------
+/* ---------- комментарии Дмитрия для Codex: раздел в конце заметки, галочка = Codex учёл ----------
    ## 💬 Комментарии Дмитрия
    - [ ] 💬 2026-10-19 18:40 — текст (продолжение — строки с отступом)
-       - ↳ Claude 2026-10-20: что сделал                 ← ответ Claude, галочка становится [x]
-   Открытые Claude собирает скриптом _pult/comments.py. */
+       - ↳ Codex 2026-10-20: что сделал                 ← ответ Codex, галочка становится [x]
+   Открытые Codex собирает скриптом _pult/comments.py. */
 const CMT_HEAD = '## 💬 Комментарии Дмитрия';
 const CMT_RE = /^- \[( |x|X)\] 💬 (\d{4}-\d{2}-\d{2})(?: (\d{2}:\d{2}))? — (.*)$/;
 const isHeading = l => /^#{1,2} /.test(l);
@@ -324,7 +324,7 @@ function buildUnit(file) {
     source_post: fields.source_post ? String(fields.source_post) : null,
     fit: fields.fit ? String(fields.fit) : null,
     batch: asDate(fields.batch),
-    // этап 3: варианты формы от Claude (первый — рекомендованный) и выбор Дмитрия
+    // этап 3: варианты формы от Codex (первый — рекомендованный) и выбор Дмитрия
     form_options: (Array.isArray(fields.form_options) ? fields.form_options : String(fields.form_options || '').split(/[,\s]+/)).map(formId).filter(Boolean),
     format_pick: formId(fields.format_pick),
     comments: parseComments(body),
@@ -762,7 +762,7 @@ function dShort(iso) { if (!iso) return ''; const [, m, d] = iso.split('-').map(
 function tagsHtml(u) {
   const t = [];
   if (becamePost(u)) t.push(`<span class="tag blue">${icon('megaphone')}стала постом${u.became_post.length ? ' ' + esc(u.became_post.join(', ')) : ''}</span>`);
-  else if (inWork(u)) { const l = laneOf(u); t.push(`<span class="tag ${l.who === 'me' ? 'yellow' : ''}" title="${l.who === 'me' ? 'Ход твой' : 'Ход Claude'}">${l.n} · ${STEPS[l.n]} · ${whoName(l)}</span>`); }
+  else if (inWork(u)) { const l = laneOf(u); t.push(`<span class="tag ${l.who === 'me' ? 'yellow' : ''}" title="${l.who === 'me' ? 'Ход твой' : 'Ход Codex'}">${l.n} · ${STEPS[l.n]} · ${whoName(l)}</span>`); }
   else if (u.kind === 'post' || u.status !== 'новая') t.push(`<span class="tag">${esc(u.status)}</span>`);
   if (u.thesis) t.push(`<span class="tag" title="${esc(u.thesis_title || '')}">${esc(u.thesis)}</span>`);
   if (u.ikind === 'перепозиционирование') t.push(`<span class="tag" title="Перепозиционирование вышедшего поста">♻️${u.source_post ? ' ' + esc(u.source_post) : ''}</span>`);
@@ -771,7 +771,7 @@ function tagsHtml(u) {
   if (u.kind === 'idea') t.push(`<span class="tag">${u.batch ? 'партия ' + dShort(u.batch) : esc(srcName(u))}</span>`);
   if (u.plan_date) t.push(`<span class="tag green">${icon('calendar-days')}${dShort(u.plan_date)}</span>`);
   if (u.kind === 'post' && u.published_date && u.stage === 'опубликован') t.push(`<span class="tag" title="Когда и где вышел">${icon('megaphone')}${dShort(u.published_date)}${chShort(u) ? ' · ' + chShort(u) : ''}</span>`);
-  if (u.cmtOpen) t.push(`<span class="tag cmt" title="Комментарии, которые Claude ещё не учёл">${icon('message-circle')}${u.cmtOpen}</span>`);
+  if (u.cmtOpen) t.push(`<span class="tag cmt" title="Комментарии, которые Codex ещё не учёл">${icon('message-circle')}${u.cmtOpen}</span>`);
   return `<div class="tags">${t.join('')}</div>`;
 }
 /* карточка идёт по этапам 2–6: пост конвейера или взятая идея, по которой пост ещё не заведён */
@@ -793,7 +793,7 @@ function cardHtml(u) {
 function miniHtml(u, { drag = true, note = '' } = {}) {
   return `<div class="mini${drag ? '' : ' static'}" ${drag ? `draggable="true" data-drag="${esc(u.path)}"` : ''} data-open="${esc(u.path)}">
     <div class="row"><span class="uid">${esc(u.id)}</span><span class="pdot" style="background:var(--p-${u.pillar || 'none'})" title="${esc(PMAP[u.pillar] ? pName(PMAP[u.pillar]) : 'без пиллара')}"></span>
-      <span class="r">${u.cmtOpen ? `<span class="tag cmt" title="Комментарии, которые Claude ещё не учёл">${icon('message-circle')}${u.cmtOpen}</span>` : ''}${u.plan_date ? `<span class="tag green">${icon('calendar-days')}${dShort(u.plan_date)}</span>` : ''}${u.my_score ? `<span title="Твоя оценка">★${u.my_score}</span>` : ''}</span></div>
+      <span class="r">${u.cmtOpen ? `<span class="tag cmt" title="Комментарии, которые Codex ещё не учёл">${icon('message-circle')}${u.cmtOpen}</span>` : ''}${u.plan_date ? `<span class="tag green">${icon('calendar-days')}${dShort(u.plan_date)}</span>` : ''}${u.my_score ? `<span title="Твоя оценка">★${u.my_score}</span>` : ''}</span></div>
     <div class="t">${esc(u.title)}</div>${note ? `<div class="mnote">${esc(note)}</div>` : ''}
   </div>`;
 }
@@ -808,7 +808,7 @@ function renderWhere() {
   renderConv();
 }
 
-/* ---------- кнопка «Двигай»: сессия Claude на маке, видна и с телефона (conveyor.py, 23.10.2026) ---------- */
+/* ---------- кнопка «Двигай»: сессия Codex на маке, видна и с телефона (conveyor.py, 23.10.2026) ---------- */
 function convPhase(c) {
   if (!c) return S.convErr ? 'idle' : 'none';
   const st = c.state || {}, req = c.request || {};
@@ -825,10 +825,10 @@ function renderConv() {
   if (!S.loaded || (MODE === 'gh' && !GH.token) || ph === 'none' || S.mode === 'prod') { el.innerHTML = ''; return; } // «Двигай» — про конвейер контента
   const last = st.started && !st.running ? ` Прошлая сессия: ${dm(st.started)}, ${hm(st.started)}${st.ended ? `–${hm(st.ended)}` : ''}.` : '';
   el.innerHTML = ph === 'run'
-    ? `<button class="convst run" id="conv-info" title="Сессия «${esc(st.session)}» открыта с ${hm(st.started)}"><span class="live"></span>Claude работает</button>`
+    ? `<button class="convst run" id="conv-info" title="Сессия «${esc(st.session)}» открыта с ${hm(st.started)}"><span class="live"></span>Codex работает</button>`
     : ph === 'wait'
       ? `<button class="convst wait" id="conv-info" title="Просьба ушла, мак её ещё не забрал">${icon('hourglass')}Ждём мак</button>`
-      : `<button class="btn primary convgo" id="conv-go" title="${esc('Открыть на маке сессию Claude: он разберёт всё, что ждёт его. Сессию видно в приложении Claude на телефоне.' + last)}">${icon('play')}Двигай</button>`;
+      : `<button class="btn primary convgo" id="conv-go" title="${esc('Открыть на маке сессию Codex: он разберёт всё, что ждёт его. Сессия откроется в Терминале на маке.' + last)}">${icon('play')}Двигай</button>`;
   icons();
 }
 async function refreshConv() {
@@ -845,7 +845,7 @@ function convPoll(ms) {
 }
 async function convGo() {
   const n = S.units.filter(u => (laneOf(u) || {}).who === 'claude').length;
-  if (!confirm(`Открыть на маке сессию Claude?\n\nОн разберёт всё, что ждёт его${n ? ` (карточек: ${n})` : ''}. Сессию видно в приложении Claude на телефоне, отвечать можно оттуда.${MODE === 'gh' ? '\n\nМак заметит просьбу в течение 2–4 минут, если он включён и не спит.' : ''}`)) return;
+  if (!confirm(`Открыть на маке сессию Codex?\n\nОн разберёт всё, что ждёт его${n ? ` (карточек: ${n})` : ''}. Сессия откроется в Терминале на маке; результаты появятся в карточках пульта.${MODE === 'gh' ? '\n\nМак заметит просьбу в течение 2–4 минут, если он включён и не спит.' : ''}`)) return;
   const btn = $('#conv-go');
   if (btn) btn.disabled = true;
   try {
@@ -853,7 +853,7 @@ async function convGo() {
     S.conv = { state: r.state, request: r.request };
     S.convErr = null;
     if (MODE === 'gh') toast('Просьба ушла. Мак откроет сессию в течение 2–4 минут, если он включён и не спит.', { ms: 9000 });
-    else if (r.ok) toast(`Сессия «${r.state.session}» открылась в Терминале. На телефоне она в приложении Claude.`, { ms: 9000 });
+    else if (r.ok) toast(`Сессия «${r.state.session}» открылась в Терминале. Результаты появятся в карточках пульта.`, { ms: 9000 });
     else toast('Сессия уже открыта: пиши в неё.', { kind: 'warn' });
   } catch (e) { toast('Не получилось: ' + e.message, { kind: 'err' }); if (btn) btn.disabled = false; return; }
   renderConv();
@@ -861,7 +861,7 @@ async function convGo() {
 }
 function convInfo() {
   const st = (S.conv && S.conv.state) || {};
-  if (convPhase(S.conv) === 'run') toast(`Сессия «${st.session}» открыта с ${hm(st.started)}. Пиши ей в приложении Claude или в Терминале на маке. Закрыть — напиши ей «закрывай».${st.waiting ? ' Ещё одна просьба «Двигай» ждёт: начнётся, когда эту закроют.' : ''}`, { ms: 12000 });
+  if (convPhase(S.conv) === 'run') toast(`Сессия «${st.session}» открыта с ${hm(st.started)}. Пиши ей в Терминале на маке. Закрыть — напиши ей «закрывай».${st.waiting ? ' Ещё одна просьба «Двигай» ждёт: начнётся, когда эту закроют.' : ''}`, { ms: 12000 });
   else toast('Просьба ушла на GitHub. Мак заберёт её при синхронизации (раз в 2 минуты) и откроет сессию. Если мак выключен или спит — когда проснётся.', { ms: 12000 });
 }
 function renderFilters() {
@@ -877,7 +877,7 @@ function renderFilters() {
     <div class="fgroup"><span class="flabel">Откуда</span>${SRC.map(([k, n]) => `<button class="chip" data-f="src" data-v="${k}" aria-pressed="${S.f.src === k}">${esc(n)}<span class="c">${scnt(k)}</span></button>`).join('')}</div>
     <label class="toggle"><input type="checkbox" id="noposted" ${S.f.noPosted ? 'checked' : ''}>Скрыть идеи, ставшие постами<span class="c">${S.units.filter(becamePost).length}</span></label>
     <label class="toggle"><input type="checkbox" id="hidden" ${S.f.hidden ? 'checked' : ''}>Показать отклонённые и архив</label>
-    <label class="toggle"><input type="checkbox" id="cmtonly" ${S.f.cmt ? 'checked' : ''}>${icon('message-circle')}Только с комментариями, которые Claude ещё не учёл<span class="c">${S.units.filter(u => u.cmtOpen).length}</span></label>
+    <label class="toggle"><input type="checkbox" id="cmtonly" ${S.f.cmt ? 'checked' : ''}>${icon('message-circle')}Только с комментариями, которые Codex ещё не учёл<span class="c">${S.units.filter(u => u.cmtOpen).length}</span></label>
     <label class="toggle"><input type="checkbox" id="mine" ${S.f.mine ? 'checked' : ''}>${icon('hand')}Только ждут твоего решения<span class="c">${S.units.filter(waitsMe).length}</span></label>`;
   filtersTail();
 }
@@ -1031,7 +1031,7 @@ function stagedBodyHtml(u, body) {
   return out.join('');
 }
 
-/* блок в карточке поста: 2–3 варианта формы от Claude большими плитками + выбор из библиотеки */
+/* блок в карточке поста: 2–3 варианта формы от Codex большими плитками + выбор из библиотеки */
 function formBlockHtml(u) {
   const live = u.kind === 'post' && !u.archived && u.stage !== 'опубликован';
   if (!u.form_options.length && !u.format_pick && !live) return '';
@@ -1049,12 +1049,12 @@ function formBlockHtml(u) {
     </div>`;
   };
   return `<div class="fblock"><p class="section-l">Форма картинки · этап ${FORM_STEP}</p>
-    ${ids.length ? `<div class="fopts">${ids.map(tile).join('')}</div>` : '<p class="hint">Вариантов от Claude пока нет. Можно выбрать самому.</p>'}
+    ${ids.length ? `<div class="fopts">${ids.map(tile).join('')}</div>` : '<p class="hint">Вариантов от Codex пока нет. Можно выбрать самому.</p>'}
     <div class="inline"><button class="btn" data-openlib="${esc(u.path)}">${icon('shapes')}Выбрать из библиотеки</button>${u.format_pick ? '<span class="hint">Нажми на выбранную ещё раз, чтобы снять выбор</span>' : ''}</div>
   </div>`;
 }
 
-/* ---------- экран «Конвейер»: колонки — этапы, в колонке сверху «ждут тебя», ниже «у Claude» (22.10.2026) ---------- */
+/* ---------- экран «Конвейер»: колонки — этапы, в колонке сверху «ждут тебя», ниже «у Codex» (22.10.2026) ---------- */
 /* где карточка: n — этап (0 — пост со старым статусом без этапа), who — чей ход; null — вне конвейера */
 function laneOf(u) {
   if (u.archived || u.stage === 'отклонено' || becamePost(u)) return null;
@@ -1091,7 +1091,7 @@ function renderBoard() {
   const cols = [...lanes.map(l => ({ ...l, items: m[l.n].all })), ...(S.f.hidden ? [{ n: 'out', name: 'Отсеяно и архив', icon: 'archive', items: out }] : [])];
   const strip = lanes.map(l => {
     const x = m[l.n];
-    return `<button class="ls${x.all.length ? '' : ' zero'}" data-lane="${l.n}" title="${esc(`${l.name}: ${x.all.length}${x.me.length ? ` · ждут тебя ${x.me.length}` : ''}${x.claude.length ? ` · у Claude ${x.claude.length}` : ''}`)}">
+    return `<button class="ls${x.all.length ? '' : ' zero'}" data-lane="${l.n}" title="${esc(`${l.name}: ${x.all.length}${x.me.length ? ` · ждут тебя ${x.me.length}` : ''}${x.claude.length ? ` · у Codex ${x.claude.length}` : ''}`)}">
       ${l.n ? `<span class="ls-n">${l.n}</span>` : ''}${esc(l.name)}<b>${x.all.length}</b>${x.me.length && l.n < TEXT_STEP ? `<span class="ls-me">${x.me.length}</span>` : ''}</button>`;
   }).join(`<span class="ls-arr">${icon('chevron-right')}</span>`);
   const minis = (items, key, note) => {
@@ -1331,13 +1331,13 @@ function renderStats() {
   S.units.filter(u => passIn(u, true) && (u.kind === 'post' || u.batch)).forEach(u => { const s = dropStep(u); if (s) dropped[s] = (dropped[s] || 0) + 1; });
   const sum = w => LANES.filter(l => l.n < TEXT_STEP).reduce((a, l) => a + m[l.n][w].length, 0);
   const kpis = [
-    ['На отборе', m[1].all.length, 'идеи'], ['Ждут тебя', sum('me'), 'решить в пульте'], ['У Claude', sum('claude'), 'делаю я'],
+    ['На отборе', m[1].all.length, 'идеи'], ['Ждут тебя', sum('me'), 'решить в пульте'], ['У Codex', sum('claude'), 'делаю я'],
     ['Пишешь текст', m[TEXT_STEP].all.length, `этап ${TEXT_STEP}`], ['Вышло за 30 дней', pub30.length, 'по дате публикации'], ['В плане на 2 недели', plan14.length, 'с датой в шапке'],
   ];
   const funnel = LANES.map(l => {
     const x = m[l.n];
     const v = l.n === OUT_LANE ? x.all.filter(u => u.step).length : x.all.length;
-    const bits = [x.me.length && l.n < OUT_LANE ? `${l.n === TEXT_STEP ? 'пишешь ты' : 'ждут тебя'} ${x.me.length}` : '', x.claude.length ? `у Claude ${x.claude.length}` : '', dropped[l.n] ? `отсеяно ${dropped[l.n]}` : ''].filter(Boolean);
+    const bits = [x.me.length && l.n < OUT_LANE ? `${l.n === TEXT_STEP ? 'пишешь ты' : 'ждут тебя'} ${x.me.length}` : '', x.claude.length ? `у Codex ${x.claude.length}` : '', dropped[l.n] ? `отсеяно ${dropped[l.n]}` : ''].filter(Boolean);
     return { name: `${l.n} ${l.name}`, v, me: x.me.length, claude: x.claude.length, out: dropped[l.n] || 0, label: `<b>${v}</b>`, note: bits.join(' · '), tip: `${l.name}: ${v}${bits.length ? '<br>' + bits.join('<br>') : ''}` };
   });
   const w0 = addDays(mondayOf(today), -7 * 25);
@@ -1382,7 +1382,7 @@ function renderStats() {
       ${pillarPanel('Доли пилларов: в плане на 6 недель', `${plan42.length} единиц с датой в плане до ${dShort(isoOf(addDays(today, 42)))}.`, plan42)}
       <div class="panel"><h3>Конвейер</h3><p class="sub">Сколько карточек сейчас на каждом этапе, чей ход и сколько отсеяно. «Вышло» — посты, прошедшие этапы с 21.10. Сколько дней карточка стоит на этапе, пока не считаем: дат переходов в файлах нет.</p>
         ${hbars(funnel)}
-        <details><summary>Таблицей</summary>${tableHtml(['Этап', 'Сейчас', 'Ждут тебя', 'У Claude', 'Отсеяно'], funnel.map(f => [f.name, f.v, f.me, f.claude, f.out]))}</details></div>
+        <details><summary>Таблицей</summary>${tableHtml(['Этап', 'Сейчас', 'Ждут тебя', 'У Codex', 'Отсеяно'], funnel.map(f => [f.name, f.v, f.me, f.claude, f.out]))}</details></div>
       <div class="panel"><h3>Ритм публикаций</h3><p class="sub">Постов в неделю за полгода, по дате публикации.${noDate ? ` У ${noDate} опубликованных даты нет — они не попали в график.` : ''}</p>
         ${rhythm}
         <details><summary>Таблицей</summary>${tableHtml(['Неделя', 'Постов', 'Какие'], weeks.filter(w => w.items.length).map(w => [`${dShort(isoOf(w.ws))} — ${dShort(isoOf(w.we))}`, w.items.length, w.items.map(u => u.id).join(', ')]))}</details></div>
@@ -1430,10 +1430,10 @@ function fillImages(root) {
   });
 }
 /* ---------- замечания к месту в тексте: выделил кусок → «Замечание» → место подсвечено с номером (Дмитрий 22.10.2026) ----------
-   Копятся в браузере и уходят Claude одной записью: «Доработать» или вместе с решением. В файле — обычный комментарий «📍 «цитата»». */
+   Копятся в браузере и уходят Codex одной записью: «Доработать» или вместе с решением. В файле — обычный комментарий «📍 «цитата»». */
 const marksOf = u => S.marks[u.path] || [];
 function saveMarks() { try { localStorage.setItem(MARKS_KEY, JSON.stringify(S.marks)); } catch (e) { /* нет хранилища: живут до перезагрузки */ } }
-/* открытые замечания карточки по порядку: сначала отправленные (ждут Claude), потом неотправленные; n — номер на подсветке */
+/* открытые замечания карточки по порядку: сначала отправленные (ждут Codex), потом неотправленные; n — номер на подсветке */
 function openMarks(u) {
   const sent = u.comments.filter(c => !c.done && c.quote).map(c => ({ q: c.quote, note: c.note, sent: true }));
   return [...sent, ...marksOf(u).map((m, i) => ({ q: m.q, note: m.note, sent: false, i }))].map((m, k) => ({ ...m, n: k + 1 }));
@@ -1444,10 +1444,10 @@ function marksListHtml(u) {
   const ms = openMarks(u).filter(m => !m.sent);
   return ms.length ? `<ol class="mlist">${ms.map(m => `<li><span class="mn">${m.n}</span><span class="mt">«${esc(cut(m.q, 90))}»${m.note ? ` — ${esc(m.note)}` : ''}</span><button class="iconbtn" data-unmark="${m.i}" aria-label="Убрать замечание">${icon('x')}</button></li>`).join('')}</ol>` : '';
 }
-/* карточка без кнопок решения (ход Claude, вне конвейера): отдельная кнопка отправки */
+/* карточка без кнопок решения (ход Codex, вне конвейера): отдельная кнопка отправки */
 function marksBarHtml(u) {
   if (canDecide(u) || !marksOf(u).length) return '';
-  return `<div class="decide"><div class="dnow">Не отправлены Claude: ${marksOf(u).length}</div>${marksListHtml(u)}<button class="dbtn yes" data-sendmarks>${icon('send')}Отправить замечания</button></div>`;
+  return `<div class="decide"><div class="dnow">Не отправлены Codex: ${marksOf(u).length}</div>${marksListHtml(u)}<button class="dbtn yes" data-sendmarks>${icon('send')}Отправить замечания</button></div>`;
 }
 /* подсветка: ищем цитату по тексту карточки без учёта пробелов (выделение через ячейки таблицы даёт табы и переводы строк) */
 function markText(roots, m) {
@@ -1528,7 +1528,7 @@ function openMarkBox(u, q) {
     saveMarks();
     close();
     renderDrawer();
-    toast(`Замечание ${openMarks(S.by[u.path]).length} отмечено. Уйдёт Claude с «Доработать» или вместе с решением`);
+    toast(`Замечание ${openMarks(S.by[u.path]).length} отмечено. Уйдёт Codex с «Доработать» или вместе с решением`);
   };
   $('#d-mark-cancel').onclick = close;
   $('#d-mark-add').onclick = add;
@@ -1547,19 +1547,19 @@ document.addEventListener('selectionchange', () => { clearTimeout(S.selT); S.sel
 function commentsHtml(u, withInput = true) {
   const num = new Map(openMarks(u).filter(m => m.sent).map(m => [m.q, m.n]));
   const list = u.comments.map(c => `<div class="cmt ${c.done ? 'done' : ''}">
-      <div class="cmeta">${c.done ? `${icon('check-check')}учтено` : `${icon('clock')}ждёт Claude`}<span>${dShort(c.date)}${c.time ? ' ' + c.time : ''}</span></div>
+      <div class="cmeta">${c.done ? `${icon('check-check')}учтено` : `${icon('clock')}ждёт Codex`}<span>${dShort(c.date)}${c.time ? ' ' + c.time : ''}</span></div>
       ${c.quote ? `<div class="cquote">${!c.done && num.has(c.quote) ? `<span class="mn">${num.get(c.quote)}</span>` : ''}«${esc(cut(c.quote, 160))}»</div><div class="ctext">${esc(c.note || 'Вопрос к этому месту')}</div>`
         : `<div class="ctext">${esc([c.text, ...c.more].join('\n'))}</div>`}
       ${c.replies.map(r => `<div class="creply">${icon('corner-down-right')}${esc(r)}</div>`).join('')}
     </div>`).join('');
-  if (!withInput) return list ? `<div class="cmts"><p class="section-l">Комментарии для Claude</p>${list}</div>` : '';
-  const ph = u.kind === 'product' ? 'Что Claude сделать по этому продукту: расписать детально, собрать демку, написать лендинг…'
-    : `Что Claude учесть по этой ${u.kind === 'idea' ? 'идее' : 'заметке'}: поправить угол, связать с другой идеей, не брать…`;
-  return `<div class="cmts"><p class="section-l">Комментарии для Claude</p>
+  if (!withInput) return list ? `<div class="cmts"><p class="section-l">Комментарии для Codex</p>${list}</div>` : '';
+  const ph = u.kind === 'product' ? 'Что Codex сделать по этому продукту: расписать детально, собрать демку, написать лендинг…'
+    : `Что Codex учесть по этой ${u.kind === 'idea' ? 'идее' : 'заметке'}: поправить угол, связать с другой идеей, не брать…`;
+  return `<div class="cmts"><p class="section-l">Комментарии для Codex</p>
     ${list}
     <textarea id="d-cmt" rows="3" placeholder="${ph}"></textarea>
     <div class="inline"><button class="btn primary" id="d-cmt-send">${icon('send')}Отправить</button>
-      <span class="hint faint">Cmd+Enter. Запишется в файл, Claude заберёт при следующей работе с ${u.kind === 'product' ? 'продуктами' : 'контентом'}.</span></div>
+      <span class="hint faint">Cmd+Enter. Запишется в файл, Codex заберёт при следующей работе с ${u.kind === 'product' ? 'продуктами' : 'контентом'}.</span></div>
   </div>`;
 }
 function stampNow() { const d = new Date(); return `${isoOf(d)} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; }
@@ -1578,7 +1578,7 @@ function sendComment(u0, val0) {
     for (const it of items) { const r = addComment(text, it, stamp); text = r.text; entries.push(r.entry); }
     const what = marks.length ? `замечаний: ${marks.length}${val ? ' и комментарий' : ''}` : 'комментарий';
     let ver;
-    try { ver = await Store.write(u, text, `пульт: ${u.id} ${marks.length ? `замечания к тексту (${marks.length})` : 'комментарий для Claude'}`); }
+    try { ver = await Store.write(u, text, `пульт: ${u.id} ${marks.length ? `замечания к тексту (${marks.length})` : 'комментарий для Codex'}`); }
     catch (e) {
       if (e instanceof Conflict) { replaceFile(e.file); render(); toast('Файл поменяли в другом месте. Показываю свежую версию — отправь ещё раз, текст и замечания сохранены.', { kind: 'warn' }); return; }
       toast(MODE === 'gh' ? `GitHub не принял комментарий: ${e.message}` : 'Пульт не отвечает. Окно терминала с пультом открыто?', { kind: 'err' });
@@ -1607,7 +1607,7 @@ function openDrawer(key) { const fresh = S.drawer !== key; S.drawer = key; if (f
 /* ---------- отбор идей: три кнопки и сразу следующая карточка (конвейер 2.0, 21.10.2026) ---------- */
 const DECIDE_OFF = ['стала постом', 'архив'];
 const undecided = u => u.kind === 'idea' && u.status === 'новая' && !u.cmtOpen && !u.archived;
-/* пост ждёт решения Дмитрия: этап 2–5, ход его, нет комментария, который Claude ещё не учёл (✏️ = ход Claude) */
+/* пост ждёт решения Дмитрия: этап 2–5, ход его, нет комментария, который Codex ещё не учёл (✏️ = ход Codex) */
 const postWaits = u => u.kind === 'post' && u.step >= 2 && u.step < TEXT_STEP && !u.archived && u.turn === 'дмитрий' && !u.cmtOpen;
 const waitsMe = u => undecided(u) || postWaits(u);
 const canDecide = u => (u.kind === 'idea' ? !DECIDE_OFF.includes(u.status) : postWaits(u));
@@ -1641,11 +1641,11 @@ function decide(u, status) {
 function decideHtml(u) {
   if (u.kind === 'post') return postDecideHtml(u);
   if (DECIDE_OFF.includes(u.status) || becamePost(u)) return '';
-  // взята: кнопок нет — ход Claude, Дмитрию ничего делать не нужно (22.10.2026)
-  if (u.status === 'в работе') return `<div class="decide"><div class="dnow">Берём. Дальше Claude заводит пост и ${DOING[FORM_STEP]}. От тебя ничего: когда будет готово, пост появится в «Ждут тебя». ${RUN}</div>
+  // взята: кнопок нет — ход Codex, Дмитрию ничего делать не нужно (22.10.2026)
+  if (u.status === 'в работе') return `<div class="decide"><div class="dnow">Берём. Дальше Codex заводит пост и ${DOING[FORM_STEP]}. От тебя ничего: когда будет готово, пост появится в «Ждут тебя». ${RUN}</div>
     <button class="btn ghost dundo" data-retake>${icon('undo-2')}Передумал — вернуть на отбор</button></div>`;
   const now = u.status === 'отклонена' ? 'Решение: не подходит · можно поменять'
-    : u.cmtOpen ? 'На доработке: комментарий ждёт Claude · можно поменять' : `✓ — Claude заведёт пост: ${DOING[FORM_STEP].replace('пишет', 'распишет')}`;
+    : u.cmtOpen ? 'На доработке: комментарий ждёт Codex · можно поменять' : `✓ — Codex заведёт пост: ${DOING[FORM_STEP].replace('пишет', 'распишет')}`;
   return `<div class="decide" id="decide">
     <div class="dnow">${esc(now)}</div>
     <div class="dbtns" id="d-btns">
@@ -1663,9 +1663,9 @@ function decideHtml(u) {
 function postDecideHtml(u) {
   if (!u.step || u.archived || u.stage === 'опубликован') return '';
   if (!postWaits(u)) {
-    const why = u.cmtOpen ? `На доработке: Claude переделывает по твоему комментарию. ${RUN}`
-      : u.step === TEXT_STEP ? 'Этап «Текст» твой: пишешь по фактуре и выкладываешь. Вышло — пришли Claude тексты, как вышли.'
-        : `Ход Claude: ${DOING[u.step]}. От тебя ничего: когда будет готово, пост появится в «Ждут тебя». ${RUN}`;
+    const why = u.cmtOpen ? `На доработке: Codex переделывает по твоему комментарию. ${RUN}`
+      : u.step === TEXT_STEP ? 'Этап «Текст» твой: пишешь по фактуре и выкладываешь. Вышло — пришли Codex тексты, как вышли.'
+        : `Ход Codex: ${DOING[u.step]}. От тебя ничего: когда будет готово, пост появится в «Ждут тебя». ${RUN}`;
     return `<div class="decide"><div class="dnow">${esc(why)}</div></div>`;
   }
   const yes = u.step === FORM_STEP && u.format_pick ? `Берём ${u.format_pick}` : 'Берём';
@@ -1709,7 +1709,7 @@ function renderDrawer(fresh = false) {
     const where = Object.entries(u.published || {}).filter(([, v]) => v).map(([k]) => ({ li: 'LinkedIn', tg: 'Telegram', fb: 'Facebook', substack: 'Substack' }[k]));
     if (where.length) meta.push(['Вышел', `${where.join(', ')}${u.published_date ? ' · ' + dShort(u.published_date) : ''}`]);
     if (u.idea_ref) meta.push(['Из идеи', u.idea_ref]);
-    if (u.step) meta.push(['Этап', `${u.step} · ${STEPS[u.step]} · ${postWaits(u) ? 'ждёт тебя' : 'ход Claude'}`]);
+    if (u.step) meta.push(['Этап', `${u.step} · ${STEPS[u.step]} · ${postWaits(u) ? 'ждёт тебя' : 'ход Codex'}`]);
   }
   meta.push(['Файл', u.path]);
   const ghUrl = `https://github.com/${GH_REPO.owner}/${GH_REPO.repo}/blob/${GH_REPO.branch}/${encPath(u.path)}`;
@@ -1746,12 +1746,15 @@ function renderDrawer(fresh = false) {
   $('#d-status').onchange = e => save(u, { status: e.target.value }, { label: `${u.id}: статус «${e.target.value}». Записано ${Store.label}` });
   $('#d-pillar').onchange = e => save(u, { pillar: e.target.value || null }, { label: `${u.id}: пиллар ${e.target.value ? pShort(e.target.value) : 'снят'}. Записано ${Store.label}` });
   $('#d-plan').onchange = e => save(u, { plan_date: e.target.value || null }, { label: e.target.value ? `${u.id} в плане на ${dShort(e.target.value)}` : `${u.id} убран из плана` });
-  // площадка: первая отметка ставит статус «опубликован» и дату выхода сегодня, если их нет
+  // площадка: отметка о выходе ставит статус и этап «опубликован», а дату — сегодня, если её нет
   $$('[data-ch]').forEach(b => { b.onclick = () => {
     const c = CH.find(x => x.k === b.dataset.ch), on = !u.published[c.k], f = { ['published_' + c.k]: on };
-    if (on && !asDate(rawOf(u, 'published_date'))) f.published_date = S.today;
-    if (on && u.status !== 'опубликован') f.status = 'опубликован';
-    save(u, f, { label: `${u.id}: ${c.name} — ${on ? 'вышел' : 'снято'}${f.status ? ', статус «опубликован»' : ''}. Записано ${Store.label}` });
+    if (on) {
+      f.stage = 'опубликован';
+      if (!asDate(rawOf(u, 'published_date'))) f.published_date = S.today;
+      if (u.status !== 'опубликован') f.status = 'опубликован';
+    }
+    save(u, f, { label: `${u.id}: ${c.name} — ${on ? 'вышел' : 'снято'}${f.status ? ', статус «опубликован»' : ''}${on ? ', этап «опубликован»' : ''}. Записано ${Store.label}` });
   }; });
   const dp = $('#d-pub');
   if (dp) dp.onchange = e => save(u, { published_date: e.target.value || null }, { label: e.target.value ? `${u.id}: вышел ${dShort(e.target.value)}` : `${u.id}: дата выхода снята` });
@@ -1801,7 +1804,7 @@ function prodPass(p) {
 }
 function prodFiltersHtml() {
   return `<label class="toggle"><input type="checkbox" id="p-out" ${S.pf.out ? 'checked' : ''}>Показать отсеянные («нафиг»)<span class="c">${S.prods.filter(p => p.out).length}</span></label>
-    <label class="toggle"><input type="checkbox" id="p-cmt" ${S.pf.cmt ? 'checked' : ''}>${icon('message-circle')}Только с комментариями, которые Claude ещё не учёл<span class="c">${S.prods.filter(p => p.cmtOpen).length}</span></label>`;
+    <label class="toggle"><input type="checkbox" id="p-cmt" ${S.pf.cmt ? 'checked' : ''}>${icon('message-circle')}Только с комментариями, которые Codex ещё не учёл<span class="c">${S.prods.filter(p => p.cmtOpen).length}</span></label>`;
 }
 function prodCounts() {
   const live = S.prods.filter(p => !p.out);
@@ -1813,7 +1816,7 @@ function prodMini(p, note = '') {
   if (p.status === 'пауза') t.push(`<span class="tag">${icon('pause')}пауза</span>`);
   if (p.decision) t.push(`<span class="tag ${p.decision === 'развивать' ? 'green' : 'coral'}">${esc(p.decision)}</span>`);
   const lv = (k, ic, name) => (LEVELS.includes(p[k]) ? `<span class="tag ${LEVEL_TAG[p[k]]}" title="${name}: ${p[k]}">${icon(ic)}${LEVEL_SHORT[p[k]]}</span>` : '');
-  if (p.cmtOpen) t.push(`<span class="tag cmt" title="Комментарии, которые Claude ещё не учёл">${icon('message-circle')}${p.cmtOpen}</span>`);
+  if (p.cmtOpen) t.push(`<span class="tag cmt" title="Комментарии, которые Codex ещё не учёл">${icon('message-circle')}${p.cmtOpen}</span>`);
   return `<div class="mini static${p.status === 'пауза' ? ' paused' : ''}" data-open="${esc(p.path)}">
     <div class="row"><span class="uid">${esc(p.id)}</span><span class="r">${t.join('')}</span></div>
     <div class="t">${esc(p.title)}</div>${p.effort || p.upkeep ? `<div class="row lv">${lv('effort', 'hammer', 'Сложность реализации')}${lv('upkeep', 'wrench', 'Стоимость поддержки')}</div>` : ''}${note ? `<div class="mnote">${esc(note)}</div>` : ''}
@@ -1890,8 +1893,8 @@ function renderNewProd(fresh) {
     <form class="dbody newprod" id="np">
       <label><span class="section-l">Название</span><input class="field" id="np-title" required maxlength="120" placeholder="Например: разбор воронки по выгрузке из CRM"></label>
       <label><span class="section-l">Суть одной строкой</span><textarea id="np-gist" rows="3" placeholder="Чья задача и что человек получает"></textarea></label>
-      <label class="toggle"><input type="checkbox" id="np-ask" checked>Попросить Claude расписать JTBD, конкурентов, сложность и поддержку</label>
-      <p class="hint">Карточка встанет на этап «Идея». Галочка оставит в карточке комментарий для Claude. Класс, зачем нам и порог — на этапе «Идея детально».</p>
+      <label class="toggle"><input type="checkbox" id="np-ask" checked>Попросить Codex расписать JTBD, конкурентов, сложность и поддержку</label>
+      <p class="hint">Карточка встанет на этап «Идея». Галочка оставит в карточке комментарий для Codex. Класс, зачем нам и порог — на этапе «Идея детально».</p>
       <button class="btn primary" type="submit">${icon('plus')}Завести</button>
     </form>
   </aside>`;
@@ -1923,7 +1926,7 @@ function prodDecideHtml(p) {
   if (p.out) return `<div class="decide"><div class="dnow">${esc(`Нафиг с этапа «${PSTAGES[p.n - 1].name}»${p.why_not ? ': ' + p.why_not : ''}`)}</div>
     <button class="btn ghost dundo" data-pback>${icon('undo-2')}Вернуть в воронку</button></div>`;
   const next = PSTAGES[p.n], prev = PSTAGES[p.n - 2];
-  const now = `${p.status === 'пауза' ? 'На паузе. ' : ''}Этап ${p.n} · ${PSTAGES[p.n - 1].name}. ${next ? `Дальше — «${next.name}»` : p.decision ? `Решение: ${p.decision}` : 'Замер против порога, потом решение'}${p.cmtOpen ? ' · ждёт доработки Claude' : ''}`;
+  const now = `${p.status === 'пауза' ? 'На паузе. ' : ''}Этап ${p.n} · ${PSTAGES[p.n - 1].name}. ${next ? `Дальше — «${next.name}»` : p.decision ? `Решение: ${p.decision}` : 'Замер против порога, потом решение'}${p.cmtOpen ? ' · ждёт доработки Codex' : ''}`;
   // три решения, как в отборе идей (Дмитрий, 28.10.2026: «и третий вариант – доработать»); «Назад» — поправка, не решение
   return `<div class="decide" id="decide">
     <div class="dnow">${esc(now)}</div>
@@ -2033,10 +2036,10 @@ function renderProdDrawer(p, fresh) {
     save(p, { status: 'нафиг', why_not: v, archived: S.today, ...(p.n === 6 ? { decision: 'закрыть' } : {}) }, { label: `${p.id}: ${p.n === 6 ? 'закрыт' : 'нафиг'} с этапа «${st.name}». Записано ${Store.label}` });
     prodNext(p.path, p.n);
   };
-  // «Доработать» — комментарий для Claude, этап не меняется; карточка ждёт его ответа (значок комментария на доске)
+  // «Доработать» — комментарий для Codex, этап не меняется; карточка ждёт его ответа (значок комментария на доске)
   const sendFix = () => {
     const v = fix.value.trim();
-    if (!v && !marksOf(p).length) { fix.focus(); toast('Напиши, что доработать: без этого Claude не поймёт, что поправить', { kind: 'warn' }); return; }
+    if (!v && !marksOf(p).length) { fix.focus(); toast('Напиши, что доработать: без этого Codex не поймёт, что поправить', { kind: 'warn' }); return; }
     S.drafts[p.path] = v; S.fixOpen = null;
     sendComment(p, v);
     prodNext(p.path, p.n);
@@ -2050,7 +2053,7 @@ function renderProdDrawer(p, fresh) {
   $('#p-no-cancel').onclick = hide;
   $('#p-fix-cancel').onclick = hide;
 }
-/* после решения открывается следующая карточка того же этапа, которая ещё ждёт решения (не ждёт Claude), — как в отборе идей */
+/* после решения открывается следующая карточка того же этапа, которая ещё ждёт решения (не ждёт Codex), — как в отборе идей */
 function prodNext(path, n) {
   const list = S.prods.filter(x => !x.out && x.n === n && prodPass(x)).sort(prodOrder);
   const i = list.findIndex(x => x.path === path);
@@ -2196,7 +2199,7 @@ document.addEventListener('click', e => {
   if (um) { const u = S.by[S.drawer]; if (!u) return; marksOf(u).splice(Number(um.dataset.unmark), 1); if (!marksOf(u).length) delete S.marks[u.path]; saveMarks(); renderDrawer(); return; }
   if (t.closest('[data-sendmarks]')) { const u = S.by[S.drawer]; if (u) sendComment(u, ''); return; }
   const mk = t.closest('mark.cm, sup.cmn');
-  if (mk && !String(getSelection())) { const u = S.by[S.drawer]; const m = u && openMarks(u)[Number(mk.dataset.mk) - 1]; if (m) toast(`${m.n}. ${m.note || 'Вопрос к этому месту'}${m.sent ? ' · ждёт Claude' : ' · не отправлено'}`); return; }
+  if (mk && !String(getSelection())) { const u = S.by[S.drawer]; const m = u && openMarks(u)[Number(mk.dataset.mk) - 1]; if (m) toast(`${m.n}. ${m.note || 'Вопрос к этому месту'}${m.sent ? ' · ждёт Codex' : ' · не отправлено'}`); return; }
   const sf = t.closest('[data-setform]');
   if (sf) {
     const u = S.by[S.drawer];
