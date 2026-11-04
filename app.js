@@ -1147,7 +1147,16 @@ function renderPlan() {
   const end = addDays(start, 7 * weeks - 1);
   const inRange = iso => iso && iso >= isoOf(start) && iso <= isoOf(end);
   const planned = S.units.filter(u => pass(u) && inRange(u.plan_date) && u.stage !== 'опубликован');
-  const published = S.units.filter(u => pass(u) && u.kind === 'post' && u.stage === 'опубликован' && inRange(u.published_date));
+  const published = S.units.filter(u => pass(u) && u.kind === 'post' && u.stage === 'опубликован');
+  const pubEvents = published.flatMap(u => {
+    const byDate = new Map();
+    CH.filter(c => u.published[c.k]).forEach(c => {
+      const date = u.pubOn[c.k] || u.published_date;
+      if (date) byDate.set(date, [...(byDate.get(date) || []), c.short]);
+    });
+    if (!byDate.size && u.published_date) byDate.set(u.published_date, []);
+    return [...byDate].filter(([date]) => inRange(date)).map(([date, channels]) => ({ ...u, pubEventDate: date, pubEventChannels: channels }));
+  });
   const pool = S.units.filter(u => pass(u) && !u.plan_date && !becamePost(u) && !['опубликован', 'отклонено'].includes(u.stage)).sort(sorter('rank'));
   const lim = S.expand.pool ? pool.length : 80;
   const tIso = S.today;
@@ -1160,11 +1169,11 @@ function renderPlan() {
       const day = addDays(ws, d);
       const iso = isoOf(day);
       const pl = planned.filter(u => u.plan_date === iso);
-      const pb = published.filter(u => u.published_date === iso);
+      const pb = pubEvents.filter(e => e.pubEventDate === iso);
       wItems.push(...pl, ...pb);
       const cls = ['day', d >= 5 ? 'weekend' : '', iso < tIso ? 'past' : '', iso === tIso ? 'today' : ''].join(' ');
       cells += `<div class="${cls}" data-drop-date="${iso}"><div class="dn"><span>${day.getDate()}${day.getDate() === 1 || (w === 0 && d === 0) ? ' ' + MON[day.getMonth()] : ''}</span>${iso === tIso ? '<span>сегодня</span>' : ''}</div>
-        ${pb.map(u => `<div class="chipu pub" data-open="${esc(u.path)}" data-tip="${esc(`<b>${esc(u.id)}</b> вышел ${dShort(iso)}<br>${esc(u.title)}`)}">${icon('check')}<span class="uid">${esc(u.id)}</span><span class="tt">${esc(u.title)}</span></div>`).join('')}
+        ${pb.map(e => `<div class="chipu pub" data-open="${esc(e.path)}" data-tip="${esc(`<b>${esc(e.id)}</b> вышел ${dShort(iso)}${e.pubEventChannels.length ? ' · ' + esc(e.pubEventChannels.join(' + ')) : ''}<br>${esc(e.title)}`)}">${icon('check')}<span class="uid">${esc(e.id)}</span><span class="tt">${esc(e.title)}</span></div>`).join('')}
         ${pl.map(u => `<div class="chipu ${iso < tIso ? 'late' : ''}" draggable="true" data-drag="${esc(u.path)}" data-open="${esc(u.path)}" data-tip="${esc(`<b>${esc(u.id)}</b> · ${esc(u.status)}${iso < tIso ? ' · <b>дата прошла</b>' : ''}<br>${esc(u.title)}`)}"><span class="pdot" style="background:var(--p-${u.pillar || 'none'})"></span><span class="uid">${esc(u.id)}</span><span class="tt">${esc(u.title)}</span></div>`).join('')}
       </div>`;
     }
